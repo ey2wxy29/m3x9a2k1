@@ -27,7 +27,7 @@ if game.PlaceId ~= TARGET_ID then
 end
 
 --// 2. CONFIG & FILE SYSTEM
-local sellPos = Vector3.new(0, 0, 0) -- !! REPLACE WITH [COORDINATES OF SELLFISH] !!
+local sellPos = Vector3.new(226, 101, -1923) -- !! REPLACE WITH [COORDINATES OF SELLFISH] !!
 local fishingPos = Vector3.new(-992, -84, 808)
 local pickupPos = Vector3.new(83, 1, 224)
 
