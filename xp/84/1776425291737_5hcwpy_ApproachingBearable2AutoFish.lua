@@ -22,7 +22,7 @@ if game.PlaceId ~= TARGET_ID then
 end
 
 --// 2. CONFIG & FILE SYSTEM
-local sellPos = Vector3.new(226, 101, -1923) -- !! REPLACE WITH YOUR SELL COORDINATES !!
+local sellPos = Vector3.new(226, 101, -1923) -- Updated coordinates
 local fishingPos = Vector3.new(-992, -84, 808)
 local pickupPos = Vector3.new(83, 1, 224)
 
@@ -55,8 +55,9 @@ local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
 _G.AutofishEnabled = false
+local SellingInProgress = false 
 
---// 5. SELLING & LOGGING (Patience Update)
+--// 5. SELLING & LOGGING
 local function logAndNotify(fishName, success)
     local msg = success and "Successfully sold!" or "Logged: (Already Sold)."
     StarterGui:SetCore("SendNotification", {Title = fishName, Text = msg, Duration = 5})
@@ -70,41 +71,45 @@ local function logAndNotify(fishName, success)
 end
 
 local function sellFish(fish)
+    SellingInProgress = true 
     local char = player.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
     local hum = char and char:FindFirstChild("Humanoid")
-    if not root or not hum then return end
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    
+    if not char or not hum or not root then SellingInProgress = false return end
 
-    local oldCFrame = root.CFrame
-    print("Teleporting to sell: " .. fish.Name)
-    root.CFrame = CFrame.new(sellPos)
-    task.wait(1) -- Wait for world to load
+    -- 1. Pause Autofarm & Unequip Rod
+    hum:UnequipTools()
+    task.wait(2) 
     
-    hum:UnequipTools() -- Clear hands first
-    task.wait(0.5)
+    -- 2. Equip Fish & Teleport
     hum:EquipTool(fish)
-    task.wait(1) -- Give it a full second to be "held"
+    task.wait(0.5)
+    root.CFrame = CFrame.new(sellPos)
+    task.wait(1.5) 
     
-    -- Interaction sequence (Slowed down for server stability)
+    -- 3. The 3 Clicks (1.5s interval)
     for i = 1, 3 do
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-        task.wait(0.3)
+        task.wait(0.2)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        task.wait(1.2) -- Much more patient delay
+        task.wait(1.5) 
     end
     
-    -- Check if sold
-    task.wait(1)
+    -- 4. Server Patience Window
+    task.wait(5)
+    
+    -- 5. Status Check
     local stillHas = char:FindFirstChild(fish.Name) or player.Backpack:FindFirstChild(fish.Name)
     logAndNotify(fish.Name, not stillHas)
     
-    -- CLEANUP: Force unequip the fish if it's still there
+    -- 6. Cleanup Fish & Return
     hum:UnequipTools()
-    task.wait(0.5)
-    
-    print("Returning to fishing spot...")
-    root.CFrame = oldCFrame
     task.wait(1)
+    root.CFrame = CFrame.new(fishingPos)
+    task.wait(2) 
+    
+    SellingInProgress = false 
 end
 
 player.Backpack.ChildAdded:Connect(function(child)
@@ -166,7 +171,7 @@ SetupUnibarButton()
 
 --// 7. RENDER LOCK & UTILS
 local function getRodInHand() return player.Character and player.Character:FindFirstChild("Fishing Rod") end
-local function getRodAtAll() return player.Character:FindFirstChild("Fishing Rod") or player.Backpack:FindFirstChild("Fishing Rod") end
+local function getRodAtAll() return player.Character and (player.Character:FindFirstChild("Fishing Rod") or player.Backpack:FindFirstChild("Fishing Rod")) end
 
 local function getAnimState()
     local animator = player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid:FindFirstChildOfClass("Animator")
@@ -182,21 +187,21 @@ end
 RunService.RenderStepped:Connect(function()
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    if _G.AutofishEnabled and root and (root.Position - fishingPos).Magnitude < 50 then
+    if _G.AutofishEnabled and not SellingInProgress and root and (root.Position - fishingPos).Magnitude < 50 then
         workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
         workspace.CurrentCamera.CFrame = CFrame.new(root.Position + Vector3.new(0, 25, 0), root.Position)
         char.Humanoid.WalkSpeed = 0
-    elseif char and not _G.AutofishEnabled then
+    elseif char and (not _G.AutofishEnabled or SellingInProgress) then
         workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
         char.Humanoid.WalkSpeed = 16
     end
 end)
 
---// 8. MAIN CYCLE (Force-Rod Update)
+--// 8. MAIN CYCLE
 task.spawn(function()
     while true do
         task.wait(0.5)
-        if _G.AutofishEnabled then
+        if _G.AutofishEnabled and not SellingInProgress then
             local char = player.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if not root then continue end
@@ -208,34 +213,35 @@ task.spawn(function()
                 continue
             end
 
-            -- Ensure we are at the spot and holding ONLY the rod
             if (root.Position - fishingPos).Magnitude > 5 then 
                 root.CFrame = CFrame.new(fishingPos)
                 task.wait(0.5) 
             end
 
             if not getRodInHand() then 
-                char.Humanoid:UnequipTools() -- Drop the fish!
+                char.Humanoid:UnequipTools()
                 task.wait(0.5)
                 char.Humanoid:EquipTool(rod)
-                task.wait(0.8) -- Wait for equip to finish
+                task.wait(1) 
             end
             
-            -- Re-verify we are holding the rod before casting
             if getRodInHand() then
                 local cam = workspace.CurrentCamera
                 VirtualInputManager:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, true, game, 0)
                 task.wait(0.1); VirtualInputManager:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, false, game, 0)
                 
                 local t1 = tick()
-                repeat task.wait(0.1) until getAnimState() == "THROWING" or (tick()-t1 > 4) or not getRodInHand() or not _G.AutofishEnabled
-                repeat task.wait(0.1) until getAnimState() ~= "THROWING" or not getRodInHand() or not _G.AutofishEnabled
-                while _G.AutofishEnabled and getRodInHand() and getAnimState() ~= "BITE" do task.wait(0.05) end
+                repeat task.wait(0.1) until getAnimState() == "THROWING" or (tick()-t1 > 4) or not getRodInHand() or not _G.AutofishEnabled or SellingInProgress
+                repeat task.wait(0.1) until getAnimState() ~= "THROWING" or not getRodInHand() or not _G.AutofishEnabled or SellingInProgress
+                
+                while _G.AutofishEnabled and not SellingInProgress and getRodInHand() and getAnimState() ~= "BITE" do 
+                    task.wait(0.05) 
+                end
 
-                if _G.AutofishEnabled and getRodInHand() and getAnimState() == "BITE" then
+                if _G.AutofishEnabled and not SellingInProgress and getRodInHand() and getAnimState() == "BITE" then
                     VirtualInputManager:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, true, game, 0)
                     task.wait(0.1); VirtualInputManager:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, false, game, 0)
-                    repeat task.wait(0.1) until getAnimState() ~= "BITE" or not getRodInHand()
+                    repeat task.wait(0.1) until getAnimState() ~= "BITE" or not getRodInHand() or SellingInProgress
                 end
             end
             task.wait(2.5)
