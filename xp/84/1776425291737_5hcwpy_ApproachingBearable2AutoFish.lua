@@ -27,7 +27,19 @@ local ROOT         = _G.AB2Hub.RootFolder   -- "AB2 Hub"
 local ICONS_DIR    = _G.AB2Hub.AssetsIcons  -- "AB2 Hub/Assets/Icons"
 local AUDIOS_DIR   = _G.AB2Hub.AssetsAudios -- "AB2 Hub/Assets/Audios"
 local SCRIPTS_DIR  = _G.AB2Hub.ScriptsDir   -- "AB2 Hub/Scripts"
-local ensureFile   = _G.AB2Hub.ensureFile
+local function ensureFile(path, url)
+    if not (isfile and writefile) then return end
+    if not isfile(path) then
+        local ok, data = pcall(function()
+            return game:HttpGet(url, true)
+        end)
+        if ok and data and #data > 0 then
+            writefile(path, data)
+        end
+    end
+end
+
+local ensureFile = ensureFile or _G.AB2Hub.ensureFile
 
 local AF_ICONS_DIR  = ICONS_DIR  .. "/Autofish"
 local AF_AUDIOS_DIR = AUDIOS_DIR .. "/Autofish"
