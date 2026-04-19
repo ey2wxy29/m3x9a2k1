@@ -157,9 +157,9 @@ local HUB_ICON_PATH = ROOT .. "/Assets/Icons/Hub.png"
 local hubIconResolved = ensureFile(HUB_ICON_PATH, HUB_ICON_URL)
 
 --// ── Unibar Button Injection ──
-local SLOT_SIZE    = 36  -- closer to native Roblox icon spacing
-local PILL_HEIGHT  = 44  -- height of the dropdown pill
-local PILL_PADDING = 8   -- horizontal padding each side inside pill
+local SLOT_SIZE    = 36
+local PILL_HEIGHT  = 32
+local PILL_PADDING = 6
 
 local topBarApp     = CoreGui:WaitForChild("TopBarApp"):WaitForChild("TopBarApp")
 local sausageHolder = topBarApp:WaitForChild("UnibarLeftFrame"):WaitForChild("UnibarMenu"):WaitForChild("2")
@@ -351,10 +351,9 @@ local function createFeatureButton(config)
     featureCount = featureCount + 1
     local enabled = false
 
-    -- Icon slot button inside the pill
     local Slot = Instance.new("ImageButton")
     Slot.Name               = config.name .. "Slot"
-    Slot.Size               = UDim2.new(0, 32, 0, 32)
+    Slot.Size               = UDim2.new(0, 20, 0, 20)
     Slot.BackgroundTransparency = 1
     Slot.Image              = config.iconOff
     Slot.ScaleType          = Enum.ScaleType.Fit
@@ -362,32 +361,8 @@ local function createFeatureButton(config)
     Slot.ZIndex             = 4
     Slot.Parent             = FeatureList
 
-    -- Subtle active glow underneath icon when ON
-    local Glow = Instance.new("Frame", Slot)
-    Glow.Size               = UDim2.new(1, 6, 1, 6)
-    Glow.Position           = UDim2.new(0, -3, 0, -3)
-    Glow.BackgroundColor3   = Color3.fromRGB(80, 200, 120)
-    Glow.BackgroundTransparency = 1
-    Glow.BorderSizePixel    = 0
-    Glow.ZIndex             = 3
-
-    local GlowCorner = Instance.new("UICorner", Glow)
-    GlowCorner.CornerRadius = UDim.new(1, 0)
-
-    local slotTween = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-
     local function setVisualState(on)
         Slot.Image = on and config.iconOn or config.iconOff
-        TweenService:Create(Glow, slotTween, {
-            BackgroundTransparency = on and 0.55 or 1,
-        }):Play()
-        -- Slight scale pop when toggled on
-        if on then
-            TweenService:Create(Slot, TweenInfo.new(0.08), {Size = UDim2.new(0, 36, 0, 36)}):Play()
-            task.delay(0.08, function()
-                TweenService:Create(Slot, TweenInfo.new(0.1), {Size = UDim2.new(0, 32, 0, 32)}):Play()
-            end)
-        end
     end
 
     Slot.Activated:Connect(function()
@@ -412,6 +387,6 @@ _G.AB2Hub.FeatureList         = FeatureList
 _G.AB2Hub.SoundHolder         = SoundHolder
 
 --// Now fetch all feature scripts — everything they need is ready
-fetchAndRegisterAutofish()
+task.spawn(fetchAndRegisterAutofish)
 
 print("[AB2 Hub] Hub initialized successfully.")
