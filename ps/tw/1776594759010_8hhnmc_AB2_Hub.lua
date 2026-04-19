@@ -83,7 +83,18 @@ local function ensureFile(path, url)
 end
 
 --// ─────────────────────────────────────────────
---//  4. FETCH & REGISTER FEATURES
+--//  4. EXPOSE HUB GLOBALS EARLY
+--//  Must happen before fetching feature scripts
+--//  so they can read these values on load.
+--// ─────────────────────────────────────────────
+_G.AB2Hub.RootFolder  = ROOT
+_G.AB2Hub.AssetsIcons = ASSETS_ICONS
+_G.AB2Hub.AssetsAudios = ASSETS_AUDIOS
+_G.AB2Hub.ScriptsDir  = SCRIPTS_DIR
+_G.AB2Hub.ensureFile  = ensureFile
+
+--// ─────────────────────────────────────────────
+--//  5. FETCH & REGISTER FEATURES
 --// ─────────────────────────────────────────────
 
 local function fetchAndRegisterAutofish()
@@ -115,10 +126,8 @@ local function fetchAndRegisterAutofish()
     end
 end
 
-fetchAndRegisterAutofish()
-
 --// ─────────────────────────────────────────────
---//  5. HUB UI
+--//  5. HUB UI  (features are fetched AFTER UI is ready)
 --// ─────────────────────────────────────────────
 
 if CoreGui:FindFirstChild("AB2HubGui") then
@@ -199,33 +208,42 @@ DropdownContainer.ClipsDescendants   = false
 DropdownContainer.Visible            = false
 DropdownContainer.Parent             = ScreenGui
 
-local PILL_COLOR = Color3.fromRGB(0, 0, 0)  -- pure black to match CoreGui
+local PILL_COLOR = Color3.fromRGB(0, 0, 0)
+local PILL_TRANSPARENCY = 0.4
 
---// ── Triangle pointer (caret pointing up) ──
-local Triangle = Instance.new("Frame")
-Triangle.Name             = "Caret"
-Triangle.Size             = UDim2.new(0, 14, 0, 14)
-Triangle.AnchorPoint      = Vector2.new(0.5, 0)
-Triangle.Position         = UDim2.new(0.5, 0, 0, 2)
-Triangle.BackgroundColor3 = PILL_COLOR
-Triangle.BackgroundTransparency = 0.4
-Triangle.BorderSizePixel  = 0
-Triangle.Rotation         = 45
-Triangle.ZIndex           = 2
-Triangle.Parent           = DropdownContainer
+--// ── Dropdown: one container, pill + notch as siblings with same color ──
+-- The "pointer" is a small square (no rotation) that sits above the pill,
+-- clipped so only its bottom-left triangle half is visible.
+-- We avoid rotation entirely to prevent the diamond/4-corner look.
 
---// ── Pill (the actual dropdown) ──
 local featureCount = 0
 
+-- Notch: a small square, same color, positioned so it peeks above the pill
+-- and visually forms a upward bump. No rotation = no diamond issue.
+local Notch = Instance.new("Frame")
+Notch.Name               = "Notch"
+Notch.Size               = UDim2.new(0, 16, 0, 10)
+Notch.AnchorPoint        = Vector2.new(0.5, 1)
+Notch.Position           = UDim2.new(0.5, 0, 0, 9)  -- sits just above pill top
+Notch.BackgroundColor3   = PILL_COLOR
+Notch.BackgroundTransparency = PILL_TRANSPARENCY
+Notch.BorderSizePixel    = 0
+Notch.ZIndex             = 2
+Notch.Parent             = DropdownContainer
+
+local NotchCorner = Instance.new("UICorner", Notch)
+NotchCorner.CornerRadius = UDim.new(0, 3)
+
+--// ── Pill ──
 local Pill = Instance.new("Frame")
 Pill.Name               = "FeaturePill"
 Pill.Size               = UDim2.new(0, SLOT_SIZE, 0, PILL_HEIGHT)
 Pill.Position           = UDim2.new(0, 0, 0, 9)
 Pill.BackgroundColor3   = PILL_COLOR
-Pill.BackgroundTransparency = 0.4
+Pill.BackgroundTransparency = PILL_TRANSPARENCY
 Pill.BorderSizePixel    = 0
 Pill.ClipsDescendants   = true
-Pill.ZIndex             = 2
+Pill.ZIndex             = 3
 Pill.Parent             = DropdownContainer
 
 local PillCorner = Instance.new("UICorner", Pill)
@@ -268,8 +286,8 @@ local function refreshPillWidth()
     w = math.max(w, SLOT_SIZE)
     Pill.Size              = UDim2.new(0, w, 0, PILL_HEIGHT)
     DropdownContainer.Size = UDim2.new(0, w, 0, PILL_HEIGHT + 10)
-    Triangle.Position      = UDim2.new(0, w / 2, 0, 0)
-    -- Re-center dropdown under button whenever width changes
+    -- Center notch horizontally over pill
+    Notch.Position = UDim2.new(0, w / 2 - 8, 0, 0)
     DropdownContainer.Position = getDropdownPosition(2)
 end
 
@@ -283,10 +301,10 @@ local function openPanel()
     DropdownContainer.Position = getDropdownPosition(-4)
     DropdownContainer.Visible  = true
     hubOpenSound:Play()
-    Pill.BackgroundTransparency     = 0.8
-    Triangle.BackgroundTransparency = 0.8
-    TweenService:Create(Pill,     tweenInfo, {BackgroundTransparency = 0.4}):Play()
-    TweenService:Create(Triangle, tweenInfo, {BackgroundTransparency = 0.4}):Play()
+    Pill.BackgroundTransparency  = 0.8
+    Notch.BackgroundTransparency = 0.8
+    TweenService:Create(Pill,  tweenInfo, {BackgroundTransparency = PILL_TRANSPARENCY}):Play()
+    TweenService:Create(Notch, tweenInfo, {BackgroundTransparency = PILL_TRANSPARENCY}):Play()
     TweenService:Create(DropdownContainer, tweenInfo, {
         Position = getDropdownPosition(2),
     }):Play()
@@ -295,8 +313,8 @@ end
 local function closePanel()
     panelOpen = false
     hubCloseSound:Play()
-    TweenService:Create(Pill,     tweenInfo, {BackgroundTransparency = 0.8}):Play()
-    TweenService:Create(Triangle, tweenInfo, {BackgroundTransparency = 0.8}):Play()
+    TweenService:Create(Pill,  tweenInfo, {BackgroundTransparency = 0.8}):Play()
+    TweenService:Create(Notch, tweenInfo, {BackgroundTransparency = 0.8}):Play()
     local tween = TweenService:Create(DropdownContainer, tweenInfo, {
         Position = getDropdownPosition(-4),
     })
@@ -388,14 +406,12 @@ local function createFeatureButton(config)
     return Slot
 end
 
---// Expose globally so features can register themselves
+--// Expose UI-dependent globals (only available after UI is built)
 _G.AB2Hub.createFeatureButton = createFeatureButton
 _G.AB2Hub.FeatureList         = FeatureList
 _G.AB2Hub.SoundHolder         = SoundHolder
-_G.AB2Hub.RootFolder          = ROOT
-_G.AB2Hub.AssetsIcons         = ASSETS_ICONS
-_G.AB2Hub.AssetsAudios        = ASSETS_AUDIOS
-_G.AB2Hub.ScriptsDir          = SCRIPTS_DIR
-_G.AB2Hub.ensureFile          = ensureFile
+
+--// Now fetch all feature scripts — everything they need is ready
+fetchAndRegisterAutofish()
 
 print("[AB2 Hub] Hub initialized successfully.")
