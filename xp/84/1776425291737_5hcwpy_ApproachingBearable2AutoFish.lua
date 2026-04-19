@@ -27,8 +27,9 @@ local ROOT         = _G.AB2Hub.RootFolder   -- "AB2 Hub"
 local ICONS_DIR    = _G.AB2Hub.AssetsIcons  -- "AB2 Hub/Assets/Icons"
 local AUDIOS_DIR   = _G.AB2Hub.AssetsAudios -- "AB2 Hub/Assets/Audios"
 local SCRIPTS_DIR  = _G.AB2Hub.ScriptsDir   -- "AB2 Hub/Scripts"
+-- ensureFile: downloads, saves, and returns a getcustomasset URI
 local function ensureFile(path, url)
-    if not (isfile and writefile) then return end
+    if not (isfile and writefile) then return url end
     if not isfile(path) then
         local ok, data = pcall(function()
             return game:HttpGet(url, true)
@@ -37,14 +38,16 @@ local function ensureFile(path, url)
             writefile(path, data)
         end
     end
+    if getcustomasset and isfile(path) then
+        return getcustomasset(path)
+    end
+    return url
 end
 
-local ensureFile = ensureFile or _G.AB2Hub.ensureFile
-
-local AF_ICONS_DIR  = ICONS_DIR  .. "/Autofish"
-local AF_AUDIOS_DIR = AUDIOS_DIR .. "/Autofish"
+local AF_ICONS_DIR   = ICONS_DIR   .. "/Autofish"
+local AF_AUDIOS_DIR  = AUDIOS_DIR  .. "/Autofish"
 local AF_SCRIPTS_DIR = SCRIPTS_DIR .. "/Autofish"
-local LOG_FILE      = AF_SCRIPTS_DIR .. "/SoldLogs.txt"
+local LOG_FILE       = AF_SCRIPTS_DIR .. "/SoldLogs.txt"
 
 if makefolder then
     makefolder(AF_ICONS_DIR)
@@ -52,11 +55,11 @@ if makefolder then
     makefolder(AF_SCRIPTS_DIR)
 end
 
--- Download and cache assets
-ensureFile(AF_ICONS_DIR  .. "/Close.png",  ICON_OFF_URL)
-ensureFile(AF_ICONS_DIR  .. "/Open.png",   ICON_ON_URL)
-ensureFile(AF_AUDIOS_DIR .. "/Enable.mp3", SOUND_ON_URL)
-ensureFile(AF_AUDIOS_DIR .. "/Disable.mp3", SOUND_OFF_URL)
+-- Download, cache, and resolve all assets
+local ICON_OFF_ASSET  = ensureFile(AF_ICONS_DIR  .. "/Close.png",   ICON_OFF_URL)
+local ICON_ON_ASSET   = ensureFile(AF_ICONS_DIR  .. "/Open.png",    ICON_ON_URL)
+local SOUND_ON_ASSET  = ensureFile(AF_AUDIOS_DIR .. "/Enable.mp3",  SOUND_ON_URL)
+local SOUND_OFF_ASSET = ensureFile(AF_AUDIOS_DIR .. "/Disable.mp3", SOUND_OFF_URL)
 
 if writefile and isfile then
     if not isfile(LOG_FILE) then
@@ -295,7 +298,7 @@ task.spawn(function()
 end)
 
 --// ─────────────────────────────────────────────
---//  8. SOUNDS — load from cached files or URL
+--//  8. SOUNDS — use getcustomasset resolved paths
 --// ─────────────────────────────────────────────
 local soundHolder = _G.AB2Hub.SoundHolder
 
@@ -303,17 +306,8 @@ local soundOn  = Instance.new("Sound", soundHolder)
 local soundOff = Instance.new("Sound", soundHolder)
 soundOn.Volume  = 0.7
 soundOff.Volume = 0.7
-
--- Use local cached file if executor supports rbxasset, else fall back to URL
-local function resolveSoundId(localPath, fallbackUrl)
-    if isfile and isfile(localPath) then
-        return "rbxasset://" .. localPath
-    end
-    return fallbackUrl
-end
-
-soundOn.SoundId  = resolveSoundId(AF_AUDIOS_DIR .. "/Enable.mp3",  SOUND_ON_URL)
-soundOff.SoundId = resolveSoundId(AF_AUDIOS_DIR .. "/Disable.mp3", SOUND_OFF_URL)
+soundOn.SoundId  = SOUND_ON_ASSET
+soundOff.SoundId = SOUND_OFF_ASSET
 
 --// ─────────────────────────────────────────────
 --//  9. REGISTER WITH HUB — creates the button
@@ -322,8 +316,8 @@ _G.AB2Hub.Features.Autofish = State
 
 _G.AB2Hub.createFeatureButton({
     name     = "Autofish",
-    iconOff  = ICON_OFF_URL,
-    iconOn   = ICON_ON_URL,
+    iconOff  = ICON_OFF_ASSET,
+    iconOn   = ICON_ON_ASSET,
     soundOn  = soundOn,
     soundOff = soundOff,
     onToggle = function(enabled)
