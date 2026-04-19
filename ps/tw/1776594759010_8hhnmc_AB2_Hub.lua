@@ -88,15 +88,13 @@ end
 
 local function fetchAndRegisterAutofish()
     local ok, code = pcall(function()
-        return game:HttpGet(AUTOFISH_SCRIPT_URL, true)
+        return game:HttpGet(AUTOFISH_SCRIPT_URL)
     end)
-    if not ok or not code then
+    if not ok or not code or code == "" then
         warn("[AB2 Hub] Failed to fetch Autofish script.")
         return
     end
 
-    -- Execute the remotely-controlled version of Autofish.
-    -- The Autofish script sets up _G.AB2Hub.Features.Autofish with its control API.
     local fn, err = loadstring(code)
     if fn then
         local success, result = pcall(fn)
@@ -141,7 +139,7 @@ local HUB_ICON_PATH = ROOT .. "/Assets/Icons/Hub.png"
 local hubIconResolved = ensureFile(HUB_ICON_PATH, HUB_ICON_URL)
 
 --// ── Unibar Button Injection ──
-local SLOT_SIZE    = 48  -- width of each icon slot in the dropdown pill
+local SLOT_SIZE    = 36  -- closer to native Roblox icon spacing
 local PILL_HEIGHT  = 44  -- height of the dropdown pill
 local PILL_PADDING = 8   -- horizontal padding each side inside pill
 
@@ -159,10 +157,10 @@ buttonFrame.Position           = UDim2.new(0, originalWidth, 0, 0)
 buttonFrame.BackgroundTransparency = 1
 buttonFrame.Parent             = sausageHolder
 
--- Hub icon button inside the sausage
+-- Hub icon button inside the sausage — same 20x20 size as native Roblox icons
 local TopbarButton = Instance.new("ImageButton")
 TopbarButton.Name               = "AB2HubButton"
-TopbarButton.Size               = UDim2.new(0, 32, 0, 32)
+TopbarButton.Size               = UDim2.new(0, 20, 0, 20)
 TopbarButton.AnchorPoint        = Vector2.new(0.5, 0.5)
 TopbarButton.Position           = UDim2.new(0.5, 0, 0.5, 0)
 TopbarButton.BackgroundTransparency = 1
@@ -192,16 +190,20 @@ DropdownContainer.ClipsDescendants   = false
 DropdownContainer.Visible            = false
 DropdownContainer.Parent             = ScreenGui
 
+local PILL_COLOR = Color3.fromRGB(0, 0, 0)  -- pure black to match CoreGui
+
 --// ── Triangle pointer (caret pointing up) ──
+-- Rotated square that overlaps the top of the pill so they look merged
 local Triangle = Instance.new("Frame")
 Triangle.Name             = "Caret"
-Triangle.Size             = UDim2.new(0, 12, 0, 12)
+Triangle.Size             = UDim2.new(0, 14, 0, 14)
 Triangle.AnchorPoint      = Vector2.new(0.5, 0)
-Triangle.Position         = UDim2.new(0.5, 0, 0, 0)
-Triangle.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
+Triangle.Position         = UDim2.new(0.5, 0, 0, 2)  -- starts at top, overlaps pill
+Triangle.BackgroundColor3 = PILL_COLOR
+Triangle.BackgroundTransparency = 0.1
 Triangle.BorderSizePixel  = 0
 Triangle.Rotation         = 45
-Triangle.ZIndex           = 1
+Triangle.ZIndex           = 2  -- same z as pill so overlap looks solid
 Triangle.Parent           = DropdownContainer
 
 --// ── Pill (the actual dropdown) ──
@@ -210,8 +212,8 @@ local featureCount = 0
 local Pill = Instance.new("Frame")
 Pill.Name               = "FeaturePill"
 Pill.Size               = UDim2.new(0, SLOT_SIZE, 0, PILL_HEIGHT)
-Pill.Position           = UDim2.new(0, 0, 0, 8)
-Pill.BackgroundColor3   = Color3.fromRGB(30, 30, 42)
+Pill.Position           = UDim2.new(0, 0, 0, 9)  -- sits just below triangle center
+Pill.BackgroundColor3   = PILL_COLOR
 Pill.BackgroundTransparency = 0.1
 Pill.BorderSizePixel    = 0
 Pill.ClipsDescendants   = true
@@ -270,11 +272,13 @@ local tweenInfo = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirecti
 local function openPanel()
     panelOpen = true
     refreshPillWidth()
-    DropdownContainer.Position = getDropdownPosition(-4)  -- start slightly above
+    DropdownContainer.Position = getDropdownPosition(-4)
     DropdownContainer.Visible  = true
     hubOpenSound:Play()
-    Pill.BackgroundTransparency = 0.5
-    TweenService:Create(Pill, tweenInfo, {BackgroundTransparency = 0.1}):Play()
+    Pill.BackgroundTransparency    = 0.5
+    Triangle.BackgroundTransparency = 0.5
+    TweenService:Create(Pill,     tweenInfo, {BackgroundTransparency = 0.1}):Play()
+    TweenService:Create(Triangle, tweenInfo, {BackgroundTransparency = 0.1}):Play()
     TweenService:Create(DropdownContainer, tweenInfo, {
         Position = getDropdownPosition(2),
     }):Play()
@@ -283,7 +287,8 @@ end
 local function closePanel()
     panelOpen = false
     hubCloseSound:Play()
-    TweenService:Create(Pill, tweenInfo, {BackgroundTransparency = 0.5}):Play()
+    TweenService:Create(Pill,     tweenInfo, {BackgroundTransparency = 0.5}):Play()
+    TweenService:Create(Triangle, tweenInfo, {BackgroundTransparency = 0.5}):Play()
     local tween = TweenService:Create(DropdownContainer, tweenInfo, {
         Position = getDropdownPosition(-4),
     })
