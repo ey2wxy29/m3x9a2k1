@@ -8,8 +8,7 @@ local Players = game:GetService("Players")
 local StarterGui = game:GetService("StarterGui")
 local TeleportService = game:GetService("TeleportService")
 local CoreGui = game:GetService("CoreGui")
-local RunService = game:GetService("RunService")
-local ContentProvider = game:GetService("ContentProvider")
+local TweenService = game:GetService("TweenService")
 
 --// CONFIG
 local TARGET_PLACE_ID = 83861332438631
@@ -78,21 +77,6 @@ local function ensureFile(path, url)
     end
 end
 
--- Loads a sound from a local file path into a Sound instance under a parent
-local function loadSound(parent, filePath, fallbackUrl)
-    local sound = Instance.new("Sound")
-    sound.Parent = parent
-    sound.Volume = 0.6
-    if isfile and isfile(filePath) then
-        -- Use rbxasset if executor supports it, else fall back
-        sound.SoundId = "rbxasset://" .. filePath
-    else
-        -- Fallback: play directly from URL if executor supports it
-        sound.SoundId = fallbackUrl
-    end
-    return sound
-end
-
 --// ─────────────────────────────────────────────
 --//  4. FETCH & REGISTER FEATURES
 --// ─────────────────────────────────────────────
@@ -145,35 +129,53 @@ local hubOpenSound  = Instance.new("Sound", SoundHolder)
 local hubCloseSound = Instance.new("Sound", SoundHolder)
 hubOpenSound.Volume  = 0.5
 hubCloseSound.Volume = 0.5
--- Placeholders — swap SoundId when you have links
 hubOpenSound.SoundId  = HUB_OPEN_SOUND_URL
 hubCloseSound.SoundId = HUB_CLOSE_SOUND_URL
 
---// ── Topbar Button ──
+--// ── Unibar Button Injection ──
+local BUTTON_WIDTH = 48
+
+local topBarApp     = CoreGui:WaitForChild("TopBarApp"):WaitForChild("TopBarApp")
+local sausageHolder = topBarApp:WaitForChild("UnibarLeftFrame"):WaitForChild("UnibarMenu"):WaitForChild("2")
+
+local originalWidth  = sausageHolder.Size.X.Offset
+local expandedSize   = UDim2.new(0, originalWidth + BUTTON_WIDTH, 0, sausageHolder.Size.Y.Offset)
+
+local buttonFrame = Instance.new("Frame")
+buttonFrame.Name                 = "AB2HubButtonFrame"
+buttonFrame.Size                 = UDim2.new(0, BUTTON_WIDTH, 1, 0)
+buttonFrame.Position             = UDim2.new(0, originalWidth, 0, 0)
+buttonFrame.BackgroundTransparency = 1
+buttonFrame.Parent               = sausageHolder
+
 local TopbarButton = Instance.new("ImageButton")
 TopbarButton.Name                 = "AB2HubButton"
-TopbarButton.Size                 = UDim2.new(0, 36, 0, 36)
-TopbarButton.Position             = UDim2.new(0, 8, 0, 8)
-TopbarButton.BackgroundColor3     = Color3.fromRGB(20, 20, 28)
-TopbarButton.BackgroundTransparency = 0.2
-TopbarButton.BorderSizePixel      = 0
+TopbarButton.Size                 = UDim2.new(0, 32, 0, 32)
+TopbarButton.AnchorPoint          = Vector2.new(0.5, 0.5)
+TopbarButton.Position             = UDim2.new(0.5, 0, 0.5, 0)
+TopbarButton.BackgroundTransparency = 1
 TopbarButton.Image                = HUB_ICON_URL
 TopbarButton.ScaleType            = Enum.ScaleType.Fit
-TopbarButton.Parent               = ScreenGui
+TopbarButton.Parent               = buttonFrame
 
-local TopbarCorner = Instance.new("UICorner", TopbarButton)
-TopbarCorner.CornerRadius = UDim.new(0, 8)
-
-local TopbarStroke = Instance.new("UIStroke", TopbarButton)
-TopbarStroke.Color     = Color3.fromRGB(80, 120, 255)
-TopbarStroke.Thickness = 1.5
-TopbarStroke.Transparency = 0.5
+-- Keep the sausage expanded even if Roblox tries to resize it
+local sizeConn
+sizeConn = sausageHolder:GetPropertyChangedSignal("Size"):Connect(function()
+    if sausageHolder.Parent then
+        sausageHolder.Size    = expandedSize
+        buttonFrame.Position  = UDim2.new(0, sausageHolder.Size.X.Offset - BUTTON_WIDTH, 0, 0)
+    else
+        sizeConn:Disconnect()
+    end
+end)
+sausageHolder.Size = expandedSize
 
 --// ── Submenu Panel ──
+-- Positioned below the unibar (top-left, just under the topbar)
 local Panel = Instance.new("Frame")
 Panel.Name                  = "AB2HubPanel"
-Panel.Size                  = UDim2.new(0, 220, 0, 0)   -- height animates open
-Panel.Position              = UDim2.new(0, 8, 0, 50)
+Panel.Size                  = UDim2.new(0, 220, 0, 0)
+Panel.Position              = UDim2.new(0, 4, 0, 56)   -- sits just below the unibar
 Panel.BackgroundColor3      = Color3.fromRGB(12, 12, 18)
 Panel.BackgroundTransparency = 0.15
 Panel.BorderSizePixel       = 0
@@ -229,8 +231,7 @@ UIPadding.PaddingTop    = UDim.new(0, 4)
 UIPadding.PaddingBottom = UDim.new(0, 6)
 
 --// ── Panel open/close animation ──
-local PANEL_OPEN_HEIGHT  = 80  -- grows as features are added
-local PANEL_CLOSE_HEIGHT = 0
+local PANEL_OPEN_HEIGHT = 80
 local panelOpen = false
 local tweenInfo = TweenInfo.new(0.28, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
 
@@ -240,8 +241,6 @@ local function updatePanelHeight()
     count = math.max(count, 0)
     PANEL_OPEN_HEIGHT = 38 + (count * 44) + 10
 end
-
-local TweenService = game:GetService("TweenService")
 
 local function openPanel()
     panelOpen = true
