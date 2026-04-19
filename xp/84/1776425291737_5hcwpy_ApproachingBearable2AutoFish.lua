@@ -22,7 +22,7 @@ if game.PlaceId ~= TARGET_ID then
 end
 
 --// 2. CONFIG & FILE SYSTEM
-local sellPos = Vector3.new(226, 101, -1923) -- Updated coordinates
+local sellPos = Vector3.new(226, 101, -1923) 
 local fishingPos = Vector3.new(-992, -84, 808)
 local pickupPos = Vector3.new(83, 1, 224)
 
@@ -78,17 +78,18 @@ local function sellFish(fish)
     
     if not char or not hum or not root then SellingInProgress = false return end
 
-    -- 1. Pause Autofarm & Unequip Rod
+    -- Pause Autofarm & Release Camera for Selling
     hum:UnequipTools()
     task.wait(2) 
     
-    -- 2. Equip Fish & Teleport
-    hum:EquipTool(fish)
-    task.wait(0.5)
-    root.CFrame = CFrame.new(sellPos)
+    -- Teleport and Look Forward
+    root.CFrame = CFrame.new(sellPos) * CFrame.Angles(0, math.rad(90), 0) -- Adjust rad(90) if NPC is in a different direction
     task.wait(1.5) 
     
-    -- 3. The 3 Clicks (1.5s interval)
+    hum:EquipTool(fish)
+    task.wait(0.5)
+    
+    -- The 3 Clicks
     for i = 1, 3 do
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
         task.wait(0.2)
@@ -96,14 +97,11 @@ local function sellFish(fish)
         task.wait(1.5) 
     end
     
-    -- 4. Server Patience Window
     task.wait(5)
     
-    -- 5. Status Check
     local stillHas = char:FindFirstChild(fish.Name) or player.Backpack:FindFirstChild(fish.Name)
     logAndNotify(fish.Name, not stillHas)
     
-    -- 6. Cleanup Fish & Return
     hum:UnequipTools()
     task.wait(1)
     root.CFrame = CFrame.new(fishingPos)
@@ -169,7 +167,26 @@ end
 
 SetupUnibarButton()
 
---// 7. RENDER LOCK & UTILS
+--// 7. RENDER LOCK & CAMERA FIX
+RunService.RenderStepped:Connect(function()
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    
+    -- Only lock camera down if Autofishing is ON AND we are NOT currently selling
+    if _G.AutofishEnabled and not SellingInProgress and root and (root.Position - fishingPos).Magnitude < 50 then
+        workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
+        workspace.CurrentCamera.CFrame = CFrame.new(root.Position + Vector3.new(0, 25, 0), root.Position)
+        char.Humanoid.WalkSpeed = 0
+    else
+        -- Release camera back to normal during selling or when bot is off
+        workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+        if char and char:FindFirstChild("Humanoid") then
+            char.Humanoid.WalkSpeed = 16
+        end
+    end
+end)
+
+--// 8. MAIN CYCLE UTILS
 local function getRodInHand() return player.Character and player.Character:FindFirstChild("Fishing Rod") end
 local function getRodAtAll() return player.Character and (player.Character:FindFirstChild("Fishing Rod") or player.Backpack:FindFirstChild("Fishing Rod")) end
 
@@ -184,20 +201,6 @@ local function getAnimState()
     return "IDLE"
 end
 
-RunService.RenderStepped:Connect(function()
-    local char = player.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if _G.AutofishEnabled and not SellingInProgress and root and (root.Position - fishingPos).Magnitude < 50 then
-        workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
-        workspace.CurrentCamera.CFrame = CFrame.new(root.Position + Vector3.new(0, 25, 0), root.Position)
-        char.Humanoid.WalkSpeed = 0
-    elseif char and (not _G.AutofishEnabled or SellingInProgress) then
-        workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
-        char.Humanoid.WalkSpeed = 16
-    end
-end)
-
---// 8. MAIN CYCLE
 task.spawn(function()
     while true do
         task.wait(0.5)
