@@ -64,9 +64,9 @@ end
 --//  3. ASSET HELPERS
 --// ─────────────────────────────────────────────
 
--- Downloads a file from a URL and saves it if not already present
+-- Downloads a file from a URL if not already cached, returns getcustomasset URI
 local function ensureFile(path, url)
-    if not (isfile and writefile) then return end
+    if not (isfile and writefile) then return url end
     if not isfile(path) then
         local ok, data = pcall(function()
             return game:HttpGet(url, true)
@@ -75,6 +75,11 @@ local function ensureFile(path, url)
             writefile(path, data)
         end
     end
+    -- Return a usable rbxasset URI via getcustomasset if available
+    if getcustomasset and isfile(path) then
+        return getcustomasset(path)
+    end
+    return url
 end
 
 --// ─────────────────────────────────────────────
@@ -128,8 +133,12 @@ local hubOpenSound  = Instance.new("Sound", SoundHolder)
 local hubCloseSound = Instance.new("Sound", SoundHolder)
 hubOpenSound.Volume  = 0.5
 hubCloseSound.Volume = 0.5
-hubOpenSound.SoundId  = HUB_OPEN_SOUND_URL
-hubCloseSound.SoundId = HUB_CLOSE_SOUND_URL
+hubOpenSound.SoundId  = HUB_OPEN_SOUND_URL   -- placeholder, swap when you have a link
+hubCloseSound.SoundId = HUB_CLOSE_SOUND_URL  -- placeholder
+
+--// Download & cache hub icon, resolve via getcustomasset
+local HUB_ICON_PATH = ROOT .. "/Assets/Icons/Hub.png"
+local hubIconResolved = ensureFile(HUB_ICON_PATH, HUB_ICON_URL)
 
 --// ── Unibar Button Injection ──
 local SLOT_SIZE    = 48  -- width of each icon slot in the dropdown pill
@@ -157,7 +166,7 @@ TopbarButton.Size               = UDim2.new(0, 32, 0, 32)
 TopbarButton.AnchorPoint        = Vector2.new(0.5, 0.5)
 TopbarButton.Position           = UDim2.new(0.5, 0, 0.5, 0)
 TopbarButton.BackgroundTransparency = 1
-TopbarButton.Image              = HUB_ICON_URL
+TopbarButton.Image              = hubIconResolved
 TopbarButton.ScaleType          = Enum.ScaleType.Fit
 TopbarButton.Parent             = buttonFrame
 
@@ -174,18 +183,16 @@ end)
 sausageHolder.Size = expandedSize
 
 --// ── Dropdown container (holds triangle + pill) ──
--- Anchored so it appears directly below the hub button
+-- Position is calculated dynamically from the button's AbsolutePosition
 local DropdownContainer = Instance.new("Frame")
 DropdownContainer.Name               = "AB2HubDropdown"
-DropdownContainer.Size               = UDim2.new(0, SLOT_SIZE, 0, PILL_HEIGHT + 10) -- starts minimal, grows
-DropdownContainer.Position           = UDim2.new(0, originalWidth, 0, sausageHolder.Size.Y.Offset + 2)
+DropdownContainer.Size               = UDim2.new(0, SLOT_SIZE, 0, PILL_HEIGHT + 10)
 DropdownContainer.BackgroundTransparency = 1
 DropdownContainer.ClipsDescendants   = false
 DropdownContainer.Visible            = false
 DropdownContainer.Parent             = ScreenGui
 
 --// ── Triangle pointer (caret pointing up) ──
--- Drawn as a rotated square clipped to look like a triangle
 local Triangle = Instance.new("Frame")
 Triangle.Name             = "Caret"
 Triangle.Size             = UDim2.new(0, 12, 0, 12)
@@ -198,12 +205,12 @@ Triangle.ZIndex           = 1
 Triangle.Parent           = DropdownContainer
 
 --// ── Pill (the actual dropdown) ──
-local featureCount = 0  -- tracks how many icons are in the pill
+local featureCount = 0
 
 local Pill = Instance.new("Frame")
 Pill.Name               = "FeaturePill"
-Pill.Size               = UDim2.new(0, SLOT_SIZE, 0, PILL_HEIGHT)  -- grows with features
-Pill.Position           = UDim2.new(0, 0, 0, 8)   -- 8px below triangle tip
+Pill.Size               = UDim2.new(0, SLOT_SIZE, 0, PILL_HEIGHT)
+Pill.Position           = UDim2.new(0, 0, 0, 8)
 Pill.BackgroundColor3   = Color3.fromRGB(30, 30, 42)
 Pill.BackgroundTransparency = 0.1
 Pill.BorderSizePixel    = 0
@@ -212,7 +219,7 @@ Pill.ZIndex             = 2
 Pill.Parent             = DropdownContainer
 
 local PillCorner = Instance.new("UICorner", Pill)
-PillCorner.CornerRadius = UDim.new(1, 0)  -- fully rounded = pill shape
+PillCorner.CornerRadius = UDim.new(1, 0)
 
 -- Horizontal icon list inside pill
 local FeatureList = Instance.new("Frame", Pill)
@@ -232,15 +239,28 @@ local UIPadding = Instance.new("UIPadding", FeatureList)
 UIPadding.PaddingLeft   = UDim.new(0, PILL_PADDING)
 UIPadding.PaddingRight  = UDim.new(0, PILL_PADDING)
 
+-- Dynamically calculates where the dropdown should sit based on
+-- the button's real screen position — works on any screen size
+local function getDropdownPosition(offset)
+    local abs = TopbarButton.AbsolutePosition
+    local sz  = TopbarButton.AbsoluteSize
+    local x   = abs.X + sz.X / 2  -- center of hub button horizontally
+    local y   = abs.Y + sz.Y + (offset or 0)
+    local w   = DropdownContainer.Size.X.Offset
+    -- Shift left so pill is centered under the button
+    x = x - w / 2
+    return UDim2.fromOffset(x, y)
+end
+
 local function refreshPillWidth()
-    -- Pill grows horizontally: padding*2 + (slot * count) + gaps
     local gaps = math.max(featureCount - 1, 0) * 4
     local w = (PILL_PADDING * 2) + (featureCount * 32) + gaps
     w = math.max(w, SLOT_SIZE)
     Pill.Size              = UDim2.new(0, w, 0, PILL_HEIGHT)
     DropdownContainer.Size = UDim2.new(0, w, 0, PILL_HEIGHT + 10)
-    -- Re-center triangle
-    Triangle.Position = UDim2.new(0, w / 2, 0, 0)
+    Triangle.Position      = UDim2.new(0, w / 2, 0, 0)
+    -- Re-center dropdown under button whenever width changes
+    DropdownContainer.Position = getDropdownPosition(2)
 end
 
 --// ── Open / Close animation ──
@@ -249,25 +269,24 @@ local tweenInfo = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirecti
 
 local function openPanel()
     panelOpen = true
-    DropdownContainer.Visible = true
     refreshPillWidth()
+    DropdownContainer.Position = getDropdownPosition(-4)  -- start slightly above
+    DropdownContainer.Visible  = true
     hubOpenSound:Play()
-    Pill.BackgroundTransparency = 0.4
+    Pill.BackgroundTransparency = 0.5
     TweenService:Create(Pill, tweenInfo, {BackgroundTransparency = 0.1}):Play()
-    -- Slide down from unibar
-    DropdownContainer.Position = UDim2.new(0, originalWidth, 0, sausageHolder.Size.Y.Offset - 4)
     TweenService:Create(DropdownContainer, tweenInfo, {
-        Position = UDim2.new(0, originalWidth, 0, sausageHolder.Size.Y.Offset + 2),
+        Position = getDropdownPosition(2),
     }):Play()
 end
 
 local function closePanel()
     panelOpen = false
     hubCloseSound:Play()
-    local tween = TweenService:Create(DropdownContainer, tweenInfo, {
-        Position = UDim2.new(0, originalWidth, 0, sausageHolder.Size.Y.Offset - 4),
-    })
     TweenService:Create(Pill, tweenInfo, {BackgroundTransparency = 0.5}):Play()
+    local tween = TweenService:Create(DropdownContainer, tweenInfo, {
+        Position = getDropdownPosition(-4),
+    })
     tween:Play()
     tween.Completed:Connect(function()
         if not panelOpen then
