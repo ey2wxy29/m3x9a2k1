@@ -1,41 +1,77 @@
---// 1. GAME CHECK & AUTO-TELEPORT
-local Players = game:GetService("Players")
-local StarterGui = game:GetService("StarterGui")
-local TeleportService = game:GetService("TeleportService")
+--[[
+    AB2 Autofish — Remotely Controlled Module
+    This script is fetched and loaded by AB2_Hub.lua.
+    It does NOT run standalone. It registers itself into
+    _G.AB2Hub.Features.Autofish and creates its own
+    file/asset structure under the AB2 Hub folder.
+]]
 
-local TARGET_ID = 83861332438631 
+--// Guard: only run when loaded by the Hub
+if not _G.AB2Hub then
+    warn("[Autofish] Must be loaded through AB2 Hub.")
+    return
+end
 
-if game.PlaceId ~= TARGET_ID then
-    local bindable = Instance.new("BindableFunction")
-    bindable.OnInvoke = function(buttonText)
-        if buttonText == "Join Game" then TeleportService:Teleport(TARGET_ID, Players.LocalPlayer) end
+--// ─────────────────────────────────────────────
+--//  ASSET URLs
+--// ─────────────────────────────────────────────
+local ICON_OFF_URL   = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/fu/xf/1776589185892_kcxlbb_fish_1f41f.png"
+local ICON_ON_URL    = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/m4/jl/1776589187448_vhqgzy_fishing-pole_1f3a3.png"
+local SOUND_ON_URL   = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/tb/iv/1776591185504_tqc6yu_FISH_Meme_Sound_Effect_FREE_TO_USE_MP3_320K.mp3"
+local SOUND_OFF_URL  = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/j7/j0/1776591188012_hi6s2t_Pluh_sound_effect_look_at_pinned_comment_and_description_720P_HD.mp3"
+
+--// ─────────────────────────────────────────────
+--//  1. FILE STRUCTURE — Autofish owns these
+--// ─────────────────────────────────────────────
+local ROOT         = _G.AB2Hub.RootFolder   -- "AB2 Hub"
+local ICONS_DIR    = _G.AB2Hub.AssetsIcons  -- "AB2 Hub/Assets/Icons"
+local AUDIOS_DIR   = _G.AB2Hub.AssetsAudios -- "AB2 Hub/Assets/Audios"
+local SCRIPTS_DIR  = _G.AB2Hub.ScriptsDir   -- "AB2 Hub/Scripts"
+local ensureFile   = _G.AB2Hub.ensureFile
+
+local AF_ICONS_DIR  = ICONS_DIR  .. "/Autofish"
+local AF_AUDIOS_DIR = AUDIOS_DIR .. "/Autofish"
+local AF_SCRIPTS_DIR = SCRIPTS_DIR .. "/Autofish"
+local LOG_FILE      = AF_SCRIPTS_DIR .. "/SoldLogs.txt"
+
+if makefolder then
+    makefolder(AF_ICONS_DIR)
+    makefolder(AF_AUDIOS_DIR)
+    makefolder(AF_SCRIPTS_DIR)
+end
+
+-- Download and cache assets
+ensureFile(AF_ICONS_DIR  .. "/Close.png",  ICON_OFF_URL)
+ensureFile(AF_ICONS_DIR  .. "/Open.png",   ICON_ON_URL)
+ensureFile(AF_AUDIOS_DIR .. "/Enable.mp3", SOUND_ON_URL)
+ensureFile(AF_AUDIOS_DIR .. "/Disable.mp3", SOUND_OFF_URL)
+
+if writefile and isfile then
+    if not isfile(LOG_FILE) then
+        writefile(LOG_FILE, "Sold Items Log:\n")
     end
-    StarterGui:SetCore("SendNotification", {
-        Title = "Wrong Game!",
-        Text = "This script is for AB2. Would you like to join?",
-        Duration = 15,
-        Callback = bindable,
-        Button1 = "Join Game",
-        Button2 = "Ignore"
-    })
-    return 
 end
 
---// 2. CONFIG & FILE SYSTEM
-local sellPos = Vector3.new(226, 101, -1923) 
-local fishingPos = Vector3.new(-992, -84, 808)
-local pickupPos = Vector3.new(83, 1, 224)
+--// ─────────────────────────────────────────────
+--//  2. SERVICES & STATE
+--// ─────────────────────────────────────────────
+local Players            = game:GetService("Players")
+local StarterGui         = game:GetService("StarterGui")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local RunService         = game:GetService("RunService")
+local TweenService       = game:GetService("TweenService")
 
-local folderName = "Ab2 Autofish"
-local fileName = folderName .. "/SoldLogs.txt"
+local player = Players.LocalPlayer
 
-if makefolder and writefile and isfile then
-    makefolder(folderName)
-    if not isfile(fileName) then writefile(fileName, "Sold Items Log:\n") end
-end
+local State = {
+    Enabled           = false,
+    SellingInProgress = false,
+}
 
---// 3. METATABLE HOOK
-local mt = getrawmetatable(game)
+--// ─────────────────────────────────────────────
+--//  3. METATABLE HOOK
+--// ─────────────────────────────────────────────
+local mt  = getrawmetatable(game)
 local old = mt.__namecall
 setreadonly(mt, false)
 mt.__namecall = newcclosure(function(self, ...)
@@ -47,138 +83,97 @@ mt.__namecall = newcclosure(function(self, ...)
 end)
 setreadonly(mt, true)
 
---// 4. SERVICES
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local RunService = game:GetService("RunService")
-local CoreGui = game:GetService("CoreGui")
-local Workspace = game:GetService("Workspace")
+--// ─────────────────────────────────────────────
+--//  4. POSITIONS
+--// ─────────────────────────────────────────────
+local sellPos    = Vector3.new(226, 101, -1923)
+local fishingPos = Vector3.new(-992, -84, 808)
+local pickupPos  = Vector3.new(83, 1, 224)
 
-local player = Players.LocalPlayer
-_G.AutofishEnabled = false
-local SellingInProgress = false 
-
---// 5. SELLING & LOGGING
+--// ─────────────────────────────────────────────
+--//  5. SELLING & LOGGING
+--// ─────────────────────────────────────────────
 local function logAndNotify(fishName, success)
     local msg = success and "Successfully sold!" or "Logged: (Already Sold)."
-    StarterGui:SetCore("SendNotification", {Title = fishName, Text = msg, Duration = 5})
-    
-    if writefile and readfile then
-        local content = readfile(fileName)
-        if not string.find(content, fishName) then
-            writefile(fileName, content .. "\n" .. fishName)
+    StarterGui:SetCore("SendNotification", {
+        Title    = fishName,
+        Text     = msg,
+        Duration = 5,
+    })
+
+    if writefile and readfile and isfile and isfile(LOG_FILE) then
+        local content = readfile(LOG_FILE)
+        if not string.find(content, fishName, 1, true) then
+            writefile(LOG_FILE, content .. "\n" .. fishName)
         end
     end
 end
 
 local function sellFish(fish)
-    SellingInProgress = true 
+    State.SellingInProgress = true
     local char = player.Character
-    local hum = char and char:FindFirstChild("Humanoid")
+    local hum  = char and char:FindFirstChild("Humanoid")
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    
-    if not char or not hum or not root then SellingInProgress = false return end
 
-    -- Pause Autofarm & Release Camera for Selling
+    if not char or not hum or not root then
+        State.SellingInProgress = false
+        return
+    end
+
     hum:UnequipTools()
-    task.wait(2) 
-    
-    -- Teleport and Look Forward
-    root.CFrame = CFrame.new(sellPos) * CFrame.Angles(0, math.rad(90), 0) -- Adjust rad(90) if NPC is in a different direction
-    task.wait(1.5) 
-    
+    task.wait(2)
+
+    root.CFrame = CFrame.new(sellPos) * CFrame.Angles(0, math.rad(90), 0)
+    task.wait(1.5)
+
     hum:EquipTool(fish)
     task.wait(0.5)
-    
-    -- The 3 Clicks
+
     for i = 1, 3 do
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.E, false, game)
         task.wait(0.2)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        task.wait(1.5) 
+        task.wait(1.5)
     end
-    
+
     task.wait(5)
-    
+
     local stillHas = char:FindFirstChild(fish.Name) or player.Backpack:FindFirstChild(fish.Name)
     logAndNotify(fish.Name, not stillHas)
-    
+
     hum:UnequipTools()
     task.wait(1)
     root.CFrame = CFrame.new(fishingPos)
-    task.wait(2) 
-    
-    SellingInProgress = false 
+    task.wait(2)
+
+    State.SellingInProgress = false
 end
 
 player.Backpack.ChildAdded:Connect(function(child)
-    if _G.AutofishEnabled and child:IsA("Tool") and child.Name ~= "Fishing Rod" then
-        if isfile and isfile(fileName) then
-            if string.find(readfile(fileName), child.Name) then return end
+    if State.Enabled and child:IsA("Tool") and child.Name ~= "Fishing Rod" then
+        if isfile and isfile(LOG_FILE) then
+            local content = readfile(LOG_FILE)
+            if string.find(content, child.Name, 1, true) then return end
         end
         sellFish(child)
     end
 end)
 
---// 6. UNIBAR BUTTON
-local function SetupUnibarButton()
-    local topBarApp = CoreGui:WaitForChild("TopBarApp"):WaitForChild("TopBarApp")
-    local sausageHolder = topBarApp:WaitForChild("UnibarLeftFrame"):WaitForChild("UnibarMenu"):WaitForChild("2")
-    local originalSize = sausageHolder.Size.X.Offset
-    local sSize = UDim2.new(0, originalSize + 48, 0, sausageHolder.Size.Y.Offset)
-
-    local buttonFrame = Instance.new("Frame")
-    buttonFrame.Name = "FishButtonFrame"
-    buttonFrame.Parent = sausageHolder
-    buttonFrame.Size = UDim2.new(0, 44, 1, 0)
-    buttonFrame.BackgroundTransparency = 1
-    buttonFrame.Position = UDim2.new(0, sausageHolder.Size.X.Offset - 48, 0, 0)
-
-    local imageButton = Instance.new("ImageButton")
-    imageButton.Parent = buttonFrame
-    imageButton.BackgroundTransparency = 1
-    imageButton.Size = UDim2.new(0, 32, 0, 32)
-    imageButton.AnchorPoint = Vector2.new(0.5, 0.5)
-    imageButton.Position = UDim2.new(0.5, 0, 0.5, 0)
-    imageButton.Image = ""
-
-    local emojiLabel = Instance.new("TextLabel")
-    emojiLabel.Parent = imageButton
-    emojiLabel.BackgroundTransparency = 1
-    emojiLabel.Size = UDim2.new(1, 0, 1, 0)
-    emojiLabel.Text = "🐟"
-    emojiLabel.TextSize = 22
-    emojiLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    emojiLabel.TextXAlignment = Enum.TextXAlignment.Center
-    emojiLabel.TextYAlignment = Enum.TextYAlignment.Center
-
-    sausageHolder:GetPropertyChangedSignal("Size"):Connect(function()
-        if sausageHolder.Parent then
-            sausageHolder.Size = sSize
-            buttonFrame.Position = UDim2.new(0, sausageHolder.Size.X.Offset - 48, 0, 0)
-        end
-    end)
-    sausageHolder.Size = sSize
-
-    imageButton.Activated:Connect(function()
-        _G.AutofishEnabled = not _G.AutofishEnabled
-        emojiLabel.Text = _G.AutofishEnabled and "🎣" or "🐟"
-    end)
-end
-
-SetupUnibarButton()
-
---// 7. RENDER LOCK & CAMERA FIX
+--// ─────────────────────────────────────────────
+--//  6. RENDER LOCK & CAMERA FIX
+--// ─────────────────────────────────────────────
 RunService.RenderStepped:Connect(function()
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    
-    -- Only lock camera down if Autofishing is ON AND we are NOT currently selling
-    if _G.AutofishEnabled and not SellingInProgress and root and (root.Position - fishingPos).Magnitude < 50 then
+
+    if State.Enabled and not State.SellingInProgress and root
+        and (root.Position - fishingPos).Magnitude < 50 then
         workspace.CurrentCamera.CameraType = Enum.CameraType.Scriptable
-        workspace.CurrentCamera.CFrame = CFrame.new(root.Position + Vector3.new(0, 25, 0), root.Position)
+        workspace.CurrentCamera.CFrame     = CFrame.new(
+            root.Position + Vector3.new(0, 25, 0), root.Position
+        )
         char.Humanoid.WalkSpeed = 0
     else
-        -- Release camera back to normal during selling or when bot is off
         workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
         if char and char:FindFirstChild("Humanoid") then
             char.Humanoid.WalkSpeed = 16
@@ -186,17 +181,29 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
---// 8. MAIN CYCLE UTILS
-local function getRodInHand() return player.Character and player.Character:FindFirstChild("Fishing Rod") end
-local function getRodAtAll() return player.Character and (player.Character:FindFirstChild("Fishing Rod") or player.Backpack:FindFirstChild("Fishing Rod")) end
+--// ─────────────────────────────────────────────
+--//  7. MAIN FISHING LOOP
+--// ─────────────────────────────────────────────
+local function getRodInHand()
+    return player.Character and player.Character:FindFirstChild("Fishing Rod")
+end
+
+local function getRodAtAll()
+    return player.Character and (
+        player.Character:FindFirstChild("Fishing Rod") or
+        player.Backpack:FindFirstChild("Fishing Rod")
+    )
+end
 
 local function getAnimState()
-    local animator = player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid:FindFirstChildOfClass("Animator")
+    local animator = player.Character
+        and player.Character:FindFirstChild("Humanoid")
+        and player.Character.Humanoid:FindFirstChildOfClass("Animator")
     if not animator then return "NONE" end
     for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
         local id = tonumber(track.Animation.AnimationId:match("%d+"))
         if id == 103273924599330 then return "THROWING" end
-        if id == 113022193981637 then return "BITE" end
+        if id == 113022193981637 then return "BITE"     end
     end
     return "IDLE"
 end
@@ -204,7 +211,7 @@ end
 task.spawn(function()
     while true do
         task.wait(0.5)
-        if _G.AutofishEnabled and not SellingInProgress then
+        if State.Enabled and not State.SellingInProgress then
             local char = player.Character
             local root = char and char:FindFirstChild("HumanoidRootPart")
             if not root then continue end
@@ -212,42 +219,104 @@ task.spawn(function()
             local rod = getRodAtAll()
             if not rod then
                 root.CFrame = CFrame.new(pickupPos)
-                task.wait(1); VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game); task.wait(1.5)
+                task.wait(1)
+                VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode.E, false, game)
+                task.wait(1.5)
                 continue
             end
 
-            if (root.Position - fishingPos).Magnitude > 5 then 
+            if (root.Position - fishingPos).Magnitude > 5 then
                 root.CFrame = CFrame.new(fishingPos)
-                task.wait(0.5) 
+                task.wait(0.5)
             end
 
-            if not getRodInHand() then 
+            if not getRodInHand() then
                 char.Humanoid:UnequipTools()
                 task.wait(0.5)
                 char.Humanoid:EquipTool(rod)
-                task.wait(1) 
+                task.wait(1)
             end
-            
+
             if getRodInHand() then
                 local cam = workspace.CurrentCamera
-                VirtualInputManager:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, true, game, 0)
-                task.wait(0.1); VirtualInputManager:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, false, game, 0)
-                
+                local cx   = cam.ViewportSize.X / 2
+                local cy   = cam.ViewportSize.Y / 2
+
+                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
+                task.wait(0.1)
+                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+
                 local t1 = tick()
-                repeat task.wait(0.1) until getAnimState() == "THROWING" or (tick()-t1 > 4) or not getRodInHand() or not _G.AutofishEnabled or SellingInProgress
-                repeat task.wait(0.1) until getAnimState() ~= "THROWING" or not getRodInHand() or not _G.AutofishEnabled or SellingInProgress
-                
-                while _G.AutofishEnabled and not SellingInProgress and getRodInHand() and getAnimState() ~= "BITE" do 
-                    task.wait(0.05) 
+                repeat task.wait(0.1)
+                until getAnimState() == "THROWING"
+                    or (tick() - t1 > 4)
+                    or not getRodInHand()
+                    or not State.Enabled
+                    or State.SellingInProgress
+
+                repeat task.wait(0.1)
+                until getAnimState() ~= "THROWING"
+                    or not getRodInHand()
+                    or not State.Enabled
+                    or State.SellingInProgress
+
+                while State.Enabled and not State.SellingInProgress
+                    and getRodInHand() and getAnimState() ~= "BITE" do
+                    task.wait(0.05)
                 end
 
-                if _G.AutofishEnabled and not SellingInProgress and getRodInHand() and getAnimState() == "BITE" then
-                    VirtualInputManager:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, true, game, 0)
-                    task.wait(0.1); VirtualInputManager:SendMouseButtonEvent(cam.ViewportSize.X/2, cam.ViewportSize.Y/2, 0, false, game, 0)
-                    repeat task.wait(0.1) until getAnimState() ~= "BITE" or not getRodInHand() or SellingInProgress
+                if State.Enabled and not State.SellingInProgress
+                    and getRodInHand() and getAnimState() == "BITE" then
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true,  game, 0)
+                    task.wait(0.1)
+                    VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+                    repeat task.wait(0.1)
+                    until getAnimState() ~= "BITE"
+                        or not getRodInHand()
+                        or State.SellingInProgress
                 end
             end
+
             task.wait(2.5)
         end
     end
 end)
+
+--// ─────────────────────────────────────────────
+--//  8. SOUNDS — load from cached files or URL
+--// ─────────────────────────────────────────────
+local soundHolder = _G.AB2Hub.SoundHolder
+
+local soundOn  = Instance.new("Sound", soundHolder)
+local soundOff = Instance.new("Sound", soundHolder)
+soundOn.Volume  = 0.7
+soundOff.Volume = 0.7
+
+-- Use local cached file if executor supports rbxasset, else fall back to URL
+local function resolveSoundId(localPath, fallbackUrl)
+    if isfile and isfile(localPath) then
+        return "rbxasset://" .. localPath
+    end
+    return fallbackUrl
+end
+
+soundOn.SoundId  = resolveSoundId(AF_AUDIOS_DIR .. "/Enable.mp3",  SOUND_ON_URL)
+soundOff.SoundId = resolveSoundId(AF_AUDIOS_DIR .. "/Disable.mp3", SOUND_OFF_URL)
+
+--// ─────────────────────────────────────────────
+--//  9. REGISTER WITH HUB — creates the button
+--// ─────────────────────────────────────────────
+_G.AB2Hub.Features.Autofish = State
+
+_G.AB2Hub.createFeatureButton({
+    name     = "Autofish",
+    iconOff  = ICON_OFF_URL,
+    iconOn   = ICON_ON_URL,
+    soundOn  = soundOn,
+    soundOff = soundOff,
+    onToggle = function(enabled)
+        State.Enabled = enabled
+    end,
+})
+
+print("[AB2 Hub] Autofish module registered successfully.")
