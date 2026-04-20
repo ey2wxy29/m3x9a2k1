@@ -18,7 +18,7 @@ end
 local ICON_OFF_URL   = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/fu/xf/1776589185892_kcxlbb_fish_1f41f.png"
 local ICON_ON_URL    = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/m4/jl/1776589187448_vhqgzy_fishing-pole_1f3a3.png"
 local SOUND_ON_URL   = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/tb/iv/1776591185504_tqc6yu_FISH_Meme_Sound_Effect_FREE_TO_USE_MP3_320K.mp3"
-local SOUND_OFF_URL  = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/j7/j0/1776591188012_hi6s2t_Pluh_sound_effect_look_at_pinned_comment_and_description_720P_HD.mp3"
+local SOUND_OFF_URL  = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/pi/v6/1776621667101_y3uuyb_Pluh_sound_effect_look_at_pinned_comment_and_description_MP3_320K.mp3"
 
 --// ─────────────────────────────────────────────
 --//  1. FILE STRUCTURE — Autofish owns these
@@ -55,11 +55,24 @@ if makefolder then
     makefolder(AF_SCRIPTS_DIR)
 end
 
--- Download, cache, and resolve all assets
-local ICON_OFF_ASSET  = ensureFile(AF_ICONS_DIR  .. "/Close.png",   ICON_OFF_URL)
-local ICON_ON_ASSET   = ensureFile(AF_ICONS_DIR  .. "/Open.png",    ICON_ON_URL)
-local SOUND_ON_ASSET  = ensureFile(AF_AUDIOS_DIR .. "/Enable.mp3",  SOUND_ON_URL)
-local SOUND_OFF_ASSET = ensureFile(AF_AUDIOS_DIR .. "/Disable.mp3", SOUND_OFF_URL)
+-- Clean up old filenames if present
+if isfile and writefile then
+    local oldFiles = {
+        AF_ICONS_DIR  .. "/Close.png",
+        AF_ICONS_DIR  .. "/Open.png",
+        AF_AUDIOS_DIR .. "/Enable.mp3",
+        AF_AUDIOS_DIR .. "/Disable.mp3",
+    }
+    for _, path in ipairs(oldFiles) do
+        if isfile(path) then writefile(path, "") end
+    end
+end
+
+-- Download, cache, and resolve all assets with clean on/off names
+local ICON_OFF_ASSET  = ensureFile(AF_ICONS_DIR  .. "/off.png",  ICON_OFF_URL)
+local ICON_ON_ASSET   = ensureFile(AF_ICONS_DIR  .. "/on.png",   ICON_ON_URL)
+local SOUND_ON_ASSET  = ensureFile(AF_AUDIOS_DIR .. "/on.mp3",   SOUND_ON_URL)
+local SOUND_OFF_ASSET = ensureFile(AF_AUDIOS_DIR .. "/off.mp3",  SOUND_OFF_URL)
 
 if writefile and isfile then
     if not isfile(LOG_FILE) then
