@@ -13,9 +13,8 @@ local TweenService = game:GetService("TweenService")
 --// CONFIG
 local TARGET_PLACE_ID = 83861332438631
 
-local HUB_ICON_URL        = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/v9/po/1776589182907_pfag7s_Approaching_bearable_1.png"
-local HUB_OPEN_SOUND_URL  = "PLACEHOLDER_HUB_OPEN_SOUND_URL"
-local HUB_CLOSE_SOUND_URL = "PLACEHOLDER_HUB_CLOSE_SOUND_URL"
+local HUB_ICON_URL   = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/v9/po/1776589182907_pfag7s_Approaching_bearable_1.png"
+local HUB_SOUND_URL  = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/32/5u/1776680530503_en3wxi_AB2Menu.mp3"
 
 local AUTOFISH_SCRIPT_URL = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/refs/heads/main/xp/84/1776425291737_5hcwpy_ApproachingBearable2AutoFish.lua"
 
@@ -145,12 +144,23 @@ local SoundHolder = Instance.new("Folder")
 SoundHolder.Name   = "AB2HubSounds"
 SoundHolder.Parent = ScreenGui
 
-local hubOpenSound  = Instance.new("Sound", SoundHolder)
-local hubCloseSound = Instance.new("Sound", SoundHolder)
-hubOpenSound.Volume  = 0.5
-hubCloseSound.Volume = 0.5
-hubOpenSound.SoundId  = HUB_OPEN_SOUND_URL   -- placeholder, swap when you have a link
-hubCloseSound.SoundId = HUB_CLOSE_SOUND_URL  -- placeholder
+-- Hub uses one sound for both open and close
+local HUB_SOUND_PATH = ROOT .. "/Assets/Audios/Hub/on.mp3"
+
+-- Clean up old placeholder-named files if they exist
+if isfile and writefile then
+    local oldOpen  = ROOT .. "/Assets/Audios/Hub/Open.mp3"
+    local oldClose = ROOT .. "/Assets/Audios/Hub/Close.mp3"
+    if isfile(oldOpen)  then writefile(oldOpen,  "") end
+    if isfile(oldClose) then writefile(oldClose, "") end
+    if makefolder then makefolder(ROOT .. "/Assets/Audios/Hub") end
+end
+
+local hubSoundResolved = ensureFile(HUB_SOUND_PATH, HUB_SOUND_URL)
+
+local hubSound = Instance.new("Sound", SoundHolder)
+hubSound.Volume  = 0.5
+hubSound.SoundId = hubSoundResolved
 
 --// Download & cache hub icon, resolve via getcustomasset
 local HUB_ICON_PATH = ROOT .. "/Assets/Icons/Hub.png"
@@ -158,8 +168,8 @@ local hubIconResolved = ensureFile(HUB_ICON_PATH, HUB_ICON_URL)
 
 --// ── Unibar Button Injection ──
 local SLOT_SIZE    = 36
-local PILL_HEIGHT  = 32
-local PILL_PADDING = 6
+local PILL_HEIGHT  = 38
+local PILL_PADDING = 8
 
 local topBarApp     = CoreGui:WaitForChild("TopBarApp"):WaitForChild("TopBarApp")
 local sausageHolder = topBarApp:WaitForChild("UnibarLeftFrame"):WaitForChild("UnibarMenu"):WaitForChild("2")
@@ -180,11 +190,21 @@ local TopbarButton = Instance.new("ImageButton")
 TopbarButton.Name               = "AB2HubButton"
 TopbarButton.Size               = UDim2.new(0, 32, 0, 32)
 TopbarButton.AnchorPoint        = Vector2.new(0.5, 0.5)
-TopbarButton.Position           = UDim2.new(0.5, -6, 0.5, 0)  -- slight left nudge to center visually
+TopbarButton.Position           = UDim2.new(0.5, -6, 0.5, 0)
 TopbarButton.BackgroundTransparency = 1
 TopbarButton.Image              = hubIconResolved
 TopbarButton.ScaleType          = Enum.ScaleType.Fit
+TopbarButton.ImageTransparency  = 0
 TopbarButton.Parent             = buttonFrame
+
+-- Hover: scale up slightly on enter, restore on leave
+local hoverTween = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+TopbarButton.MouseEnter:Connect(function()
+    TweenService:Create(TopbarButton, hoverTween, {Size = UDim2.new(0, 36, 0, 36)}):Play()
+end)
+TopbarButton.MouseLeave:Connect(function()
+    TweenService:Create(TopbarButton, hoverTween, {Size = UDim2.new(0, 32, 0, 32)}):Play()
+end)
 
 -- Persistence: stop Roblox shrinking the sausage back
 local sizeConn
@@ -292,31 +312,59 @@ local function refreshPillWidth()
 end
 
 --// ── Open / Close animation ──
-local panelOpen = false
-local tweenInfo = TweenInfo.new(0.22, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local panelOpen  = false
+-- Quint out for open (feels snappy), Quint in for close (feels smooth)
+local openTween  = TweenInfo.new(0.2,  Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local closeTween = TweenInfo.new(0.18, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+
+local function setIconsTransparency(t)
+    for _, slot in ipairs(FeatureList:GetChildren()) do
+        if slot:IsA("ImageButton") then
+            slot.ImageTransparency = t
+        end
+    end
+end
 
 local function openPanel()
     panelOpen = true
     refreshPillWidth()
-    DropdownContainer.Position = getDropdownPosition(-4)
+    -- Snap to just above final position, then slide down smoothly
+    DropdownContainer.Position = getDropdownPosition(-6)
     DropdownContainer.Visible  = true
-    hubOpenSound:Play()
-    Pill.BackgroundTransparency  = 0.8
-    Notch.BackgroundTransparency = 0.8
-    TweenService:Create(Pill,  tweenInfo, {BackgroundTransparency = PILL_TRANSPARENCY}):Play()
-    TweenService:Create(Notch, tweenInfo, {BackgroundTransparency = PILL_TRANSPARENCY}):Play()
-    TweenService:Create(DropdownContainer, tweenInfo, {
-        Position = getDropdownPosition(2),
+    Pill.BackgroundTransparency  = 1
+    Notch.BackgroundTransparency = 1
+    setIconsTransparency(1)
+    hubSound:Play()
+    TweenService:Create(Pill,  openTween, {BackgroundTransparency = PILL_TRANSPARENCY}):Play()
+    TweenService:Create(Notch, openTween, {BackgroundTransparency = PILL_TRANSPARENCY}):Play()
+    TweenService:Create(DropdownContainer, openTween, {
+        Position = getDropdownPosition(4),
     }):Play()
+    -- Fade icons in slightly after pill starts appearing
+    task.delay(0.05, function()
+        if panelOpen then
+            for _, slot in ipairs(FeatureList:GetChildren()) do
+                if slot:IsA("ImageButton") then
+                    TweenService:Create(slot, openTween, {ImageTransparency = 0}):Play()
+                end
+            end
+        end
+    end)
 end
 
 local function closePanel()
     panelOpen = false
-    hubCloseSound:Play()
-    TweenService:Create(Pill,  tweenInfo, {BackgroundTransparency = 0.8}):Play()
-    TweenService:Create(Notch, tweenInfo, {BackgroundTransparency = 0.8}):Play()
-    local tween = TweenService:Create(DropdownContainer, tweenInfo, {
-        Position = getDropdownPosition(-4),
+    hubSound:Play()
+    -- Fade icons out first
+    for _, slot in ipairs(FeatureList:GetChildren()) do
+        if slot:IsA("ImageButton") then
+            TweenService:Create(slot, closeTween, {ImageTransparency = 1}):Play()
+        end
+    end
+    TweenService:Create(Pill,  closeTween, {BackgroundTransparency = 1}):Play()
+    TweenService:Create(Notch, closeTween, {BackgroundTransparency = 1}):Play()
+    local tween = TweenService:Create(DropdownContainer, closeTween, {
+        Position = getDropdownPosition(-6),
     })
     tween:Play()
     tween.Completed:Connect(function()
@@ -360,6 +408,15 @@ local function createFeatureButton(config)
     Slot.LayoutOrder        = featureCount
     Slot.ZIndex             = 4
     Slot.Parent             = FeatureList
+
+    local slotHoverTween = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+    Slot.MouseEnter:Connect(function()
+        TweenService:Create(Slot, slotHoverTween, {Size = UDim2.new(0, 24, 0, 24)}):Play()
+    end)
+    Slot.MouseLeave:Connect(function()
+        TweenService:Create(Slot, slotHoverTween, {Size = UDim2.new(0, 20, 0, 20)}):Play()
+    end)
 
     local function setVisualState(on)
         Slot.Image = on and config.iconOn or config.iconOff
