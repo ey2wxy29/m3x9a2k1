@@ -145,14 +145,20 @@ SoundHolder.Name   = "AB2HubSounds"
 SoundHolder.Parent = ScreenGui
 
 -- Hub uses one sound for both open and close
-local HUB_SOUND_PATH = ROOT .. "/Assets/Audios/Hub/on.mp3"
+local HUB_SOUND_PATH = ROOT .. "/Assets/Audios/Hub/menu.mp3"
 
--- Clean up old placeholder-named files if they exist
+-- Clean up old named files if they exist
 if isfile and writefile then
-    local oldOpen  = ROOT .. "/Assets/Audios/Hub/Open.mp3"
-    local oldClose = ROOT .. "/Assets/Audios/Hub/Close.mp3"
-    if isfile(oldOpen)  then writefile(oldOpen,  "") end
-    if isfile(oldClose) then writefile(oldClose, "") end
+    local oldFiles = {
+        ROOT .. "/Assets/Audios/Hub/Open.mp3",
+        ROOT .. "/Assets/Audios/Hub/Close.mp3",
+        ROOT .. "/Assets/Audios/Hub/on.mp3",  -- rename from old on.mp3
+    }
+    for _, p in ipairs(oldFiles) do
+        if isfile(p) then
+            if delfile then pcall(delfile, p) else writefile(p, "") end
+        end
+    end
     if makefolder then makefolder(ROOT .. "/Assets/Audios/Hub") end
 end
 
