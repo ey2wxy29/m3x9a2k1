@@ -423,15 +423,45 @@ local function createFeatureButton(config)
     end
 
     Slot.Activated:Connect(function()
+        if _G.AB2Hub.IsAdminLocked and _G.AB2Hub.IsAdminLocked() then
+            if _G.AB2Hub.BlockedSound then _G.AB2Hub.BlockedSound:Play() end
+            local text = _G.AB2Hub.AdminBlockText and _G.AB2Hub.AdminBlockText()
+            if text then
+                StarterGui:SetCore("SendNotification", {
+                    Title    = "AB2 Hub — Blocked",
+                    Text     = text .. " is here. Cannot enable features.",
+                    Duration = 5,
+                })
+            end
+            return
+        end
         enabled = not enabled
         setVisualState(enabled)
         if enabled then
             if config.soundOn then config.soundOn:Play() end
         else
             if config.soundOff then config.soundOff:Play() end
+            local feature = _G.AB2Hub.Features[config.name]
+            if feature and feature.OnPaused then
+                task.spawn(feature.OnPaused)
+            end
         end
         if config.onToggle then config.onToggle(enabled) end
     end)
+
+    -- Expose a forceOff so admin detection can reset visual state
+    Slot:SetAttribute("FeatureName", config.name)
+    _G.AB2Hub["ForceOff_" .. config.name] = function()
+        enabled = false
+        setVisualState(false)
+        if config.soundOff then config.soundOff:Play() end
+        if config.onToggle then config.onToggle(false) end
+        -- Call feature's pause hook if it has one
+        local feature = _G.AB2Hub.Features[config.name]
+        if feature and feature.OnPaused then
+            task.spawn(feature.OnPaused)
+        end
+    end
 
     -- Refresh pill width now that a new icon was added
     refreshPillWidth()
@@ -442,6 +472,147 @@ end
 _G.AB2Hub.createFeatureButton = createFeatureButton
 _G.AB2Hub.FeatureList         = FeatureList
 _G.AB2Hub.SoundHolder         = SoundHolder
+
+--// ─────────────────────────────────────────────
+--//  7. ADMIN DETECTION
+--// ─────────────────────────────────────────────
+local DEV_LIST_URL  = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/mt/5z/1776771768533_k8t74o_DevList.txt"
+local BLOCKED_SOUND_URL = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/kt/p8/1776770565008_lf8t60_SonicDeath.mp3"
+local BLOCKED_SOUND_PATH = ROOT .. "/Assets/Audios/Hub/blocked.mp3"
+
+-- Download blocked sound
+local blockedSoundResolved = ensureFile(BLOCKED_SOUND_PATH, BLOCKED_SOUND_URL)
+local blockedSound = Instance.new("Sound", SoundHolder)
+blockedSound.Volume  = 0.6
+blockedSound.SoundId = blockedSoundResolved
+
+-- Fetch dev list remotely — one display name per line
+local DEVS = {}
+local function fetchDevList()
+    local ok, raw = pcall(function()
+        return game:HttpGet(DEV_LIST_URL)
+    end)
+    if ok and raw then
+        for name in raw:gmatch("[^\r\n]+") do
+            name = name:match("^%s*(.-)%s*$") -- trim whitespace
+            if name ~= "" then
+                DEVS[name] = true
+            end
+        end
+    end
+end
+fetchDevList()
+
+local adminLocked = false
+
+-- Returns list of display names of devs currently in server
+local function getDevsPresent()
+    local found = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if DEVS[p.DisplayName] then
+            table.insert(found, p.DisplayName)
+        end
+    end
+    return found
+end
+
+local function buildDevText(devs)
+    if #devs == 1 then
+        return devs[1] .. " is in the server"
+    else
+        return devs[1] .. " & " .. (#devs - 1) .. " More"
+    end
+end
+
+-- Darken all feature slots visually
+local function setSlotsDarkened(darkened)
+    for _, slot in ipairs(FeatureList:GetChildren()) do
+        if slot:IsA("ImageButton") then
+            TweenService:Create(slot, TweenInfo.new(0.2), {
+                ImageTransparency = darkened and 0.6 or 0,
+            }):Play()
+        end
+    end
+end
+
+local function forceStopAllFeatures()
+    for name, _ in pairs(_G.AB2Hub.Features) do
+        local cb = _G.AB2Hub["ForceOff_" .. name]
+        if cb then cb() end
+    end
+end
+
+local function onDevsEntered(devs)
+    if adminLocked then return end
+    adminLocked = true
+    forceStopAllFeatures()
+    setSlotsDarkened(true)
+    StarterGui:SetCore("SendNotification", {
+        Title    = "AB2 Hub — Heads up!",
+        Text     = buildDevText(devs) .. " is here. All features stopped.",
+        Duration = 8,
+    })
+end
+
+local function onDevsCleared()
+    adminLocked = false
+    setSlotsDarkened(false)
+    StarterGui:SetCore("SendNotification", {
+        Title    = "AB2 Hub",
+        Text     = "All devs have left. Features are available again.",
+        Duration = 6,
+    })
+end
+
+_G.AB2Hub.IsAdminLocked  = function() return adminLocked end
+_G.AB2Hub.BlockedSound   = blockedSound
+_G.AB2Hub.AdminBlockText = function()
+    local devs = getDevsPresent()
+    if #devs == 0 then return nil end
+    return buildDevText(devs)
+end
+
+-- Initial check
+local initialDevs = getDevsPresent()
+if #initialDevs > 0 then
+    adminLocked = true
+    -- Defer so UI is fully rendered before darkening
+    task.defer(function()
+        forceStopAllFeatures()
+        setSlotsDarkened(true)
+        StarterGui:SetCore("SendNotification", {
+            Title    = "AB2 Hub — Heads up!",
+            Text     = buildDevText(initialDevs) .. " is already here. Features locked.",
+            Duration = 8,
+        })
+    end)
+end
+
+Players.PlayerAdded:Connect(function(p)
+    task.wait(1) -- wait for DisplayName to load
+    if DEVS[p.DisplayName] then
+        local devs = getDevsPresent()
+        onDevsEntered(devs)
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+    if DEVS[p.DisplayName] then
+        task.wait(0.2)
+        local remaining = getDevsPresent()
+        if #remaining > 0 then
+            -- Some devs still here, just notify who left
+            StarterGui:SetCore("SendNotification", {
+                Title = "AB2 Hub",
+                Text  = p.DisplayName .. " left. " .. buildDevText(remaining) .. " still here.",
+                Duration = 6,
+            })
+        else
+            -- All devs gone
+            onDevsCleared()
+        end
+    end
+end)
 
 --// Now fetch all feature scripts — everything they need is ready
 task.spawn(fetchAndRegisterAutofish)
