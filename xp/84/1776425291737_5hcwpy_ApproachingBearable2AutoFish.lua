@@ -249,22 +249,14 @@ local function getAnimState()
     return "IDLE"
 end
 
-local function returnToFishing()
-    local char = player.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    local hum  = char and char:FindFirstChild("Humanoid")
-    if hum then hum:UnequipTools() end
-    task.wait(0.3)
-    if root then root.CFrame = CFrame.new(fishingPos) end
-end
-
 -- Called when autofish is stopped or paused by admin — unequip and teleport to fishing pos
 local function onAutofishPaused()
+    task.wait(0.3) -- let the loop settle
     local char = player.Character
     local hum  = char and char:FindFirstChild("Humanoid")
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if hum then hum:UnequipTools() end
-    task.wait(0.3)
+    task.wait(0.1)
     if root then root.CFrame = CFrame.new(fishingPos) end
 end
 
