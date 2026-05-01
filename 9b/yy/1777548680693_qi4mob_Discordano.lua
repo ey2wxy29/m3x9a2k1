@@ -917,9 +917,11 @@ local inputWrap = make("Frame", {
 }, inputArea)
 corner(8, inputWrap)
 
+-- Input box: expands vertically up to 120px then scrolls
+-- MultiLine=true, TextWrapped=true — no overlay trick (causes Android double-type)
 local inputBox = make("TextBox", {
-	Size = UDim2.new(1,-64,1,0),
-	Position = UDim2.new(0,16,0,0),
+	Size = UDim2.new(1,-64,0,36),
+	Position = UDim2.new(0,16,0,4),
 	BackgroundTransparency = 1,
 	Text = "",
 	PlaceholderText = "Message @Roblox",
@@ -927,54 +929,24 @@ local inputBox = make("TextBox", {
 	TextColor3 = C.txt_white,
 	PlaceholderColor3 = C.txt_muted,
 	TextXAlignment = Enum.TextXAlignment.Left,
-	TextWrapped = false,
+	TextYAlignment = Enum.TextYAlignment.Top,
+	TextWrapped = true,
 	ClearTextOnFocus = false,
+	MultiLine = true,
 	ZIndex = 5,
 }, inputWrap)
-make("UIPadding", {PaddingRight = UDim.new(0, 8)}, inputBox)
+make("UIPadding", {PaddingRight = UDim.new(0,8)}, inputBox)
 
--- Syntax highlight overlay: mirrors inputBox text with :emoji: highlighted
--- Discord uses a light cyan-ish color for emoji syntax while typing
-local EMOJI_SYNTAX_COLOR = "rgb(201,221,255)"  -- soft blue-white like Discord
-
-local syntaxOverlay = make("TextLabel", {
-	Size = UDim2.new(1,0,1,0),
-	BackgroundTransparency = 1,
-	RichText = true,
-	Text = "",
-	Font = FR, TextSize = 14,
-	TextColor3 = C.txt_white,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	TextWrapped = false,
-	TextTruncate = Enum.TextTruncate.AtEnd,
-	ZIndex = 6,
-}, inputBox)
-make("UIPadding", {PaddingRight = UDim.new(0, 8)}, syntaxOverlay)
-
-local function buildHighlightedText(raw)
-	-- Escape RichText special chars first
-	local escaped = raw:gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;")
-	-- Highlight :emoji: patterns in known emojis with bold + color
-	local result = escaped:gsub(":([%w_]+):", function(name)
-		if CUSTOM_EMOJIS[name] then
-			return string.format('<font color="%s"><b>:%s:</b></font>', EMOJI_SYNTAX_COLOR, name)
-		end
-		return ":" .. name .. ":"
-	end)
-	return result
-end
-
-inputBox:GetPropertyChangedSignal("Text"):Connect(function()
-	local raw = inputBox.Text
-	if raw == "" then
-		syntaxOverlay.Text = ""
-		-- Make inputBox text visible when overlay is empty
-		inputBox.TextTransparency = 0
-	else
-		syntaxOverlay.Text = buildHighlightedText(raw)
-		-- Hide actual inputBox text so overlay shows instead
-		inputBox.TextTransparency = 1
-	end
+-- Grow inputWrap height with text, cap at 120px
+inputBox:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+	local newH = math.min(inputBox.AbsoluteSize.Y + 8, 120)
+	newH = math.max(newH, 44)
+	inputWrap.Size = UDim2.new(1,-32,0,newH)
+	inputBox.Size = UDim2.new(1,-64,0,newH-8)
+	inputArea.Size = UDim2.new(1,0,0,newH+20)
+	inputArea.Position = UDim2.new(0,0,1,-(newH+20))
+	-- Also adjust msgScroll to compensate
+	msgScroll.Size = UDim2.new(1,0,1,-(168 + (newH - 44)))
 end)
 
 local sendBtn = make("TextButton", {
@@ -1052,7 +1024,11 @@ local function updateDMPreview(sender, text, ts)
 	if ts < lastMsgTs then return end
 	lastMsgTs = ts
 	local prefix = sender == USERNAME and "You: " or (sender .. ": ")
-	dmLastMsgLabel.Text = prefix .. text
+	-- Strip emoji syntax to plain names for preview
+	local preview = text:gsub(":([%w_]+):", function(name)
+		return CUSTOM_EMOJIS[name] and (":" .. name .. ":") or (":" .. name .. ":")
+	end)
+	dmLastMsgLabel.Text = prefix .. preview
 	dmTimestampLabel.Text = formatRelativeTime(ts)
 end
 
@@ -1095,6 +1071,9 @@ local function renderDateSeparator(ts)
 	local dateStr = os.date("%B %d, %Y", ts)
 	if dateStr == lastDateStr then return end
 	lastDateStr = dateStr
+	-- Reset grouping state so first message after separator is never grouped
+	lastSender = nil
+	lastTs     = 0
 	msgOrder += 1
 
 	local sep = make("Frame", {
@@ -1172,64 +1151,58 @@ local function isEmojiOnly(tokens)
 	return false
 end
 
--- Build emoji/text content into a parent frame using a horizontal wrapping layout
-local function buildEmojiContent(parent, tokens, jumbo, baseZIndex, txtColor)
-	local emojiSize = jumbo and 48 or 22
-	local fontSize  = jumbo and 14 or 14
-
-	make("UIListLayout", {
-		FillDirection = Enum.FillDirection.Horizontal,
-		VerticalAlignment = Enum.VerticalAlignment.Center,
-		Padding = UDim.new(0, 2),
-		Wraps = true,
-	}, parent)
-
-	local contentLabel = nil  -- for non-emoji or mixed, track main label
-
+-- Build a RichText string with inline emoji images and plain text
+-- Jumbo: emoji rendered at 48px. Normal: 22px inline with text
+local function buildRichText(tokens, jumbo, txtColor)
+	local size = jumbo and 48 or 22
+	local parts = {}
 	for _, token in ipairs(tokens) do
-		if token.type == "emoji" and CUSTOM_EMOJIS[token.name] then
-			local em = CUSTOM_EMOJIS[token.name]
-			local imgFrame = make("Frame", {
-				Size = UDim2.new(0, emojiSize, 0, emojiSize),
-				BackgroundTransparency = 1,
-				ZIndex = baseZIndex,
-			}, parent)
-			local img = make("ImageLabel", {
-				Size = UDim2.new(1,0,1,0),
-				BackgroundTransparency = 1,
-				Image = em.asset or "",
-				ZIndex = baseZIndex + 1,
-			}, imgFrame)
-			-- Apply asset if available, or wait
-			if em.asset then
-				img.Image = em.asset
-			else
-				task.spawn(function()
-					local waited = 0
-					while not em.asset and waited < 10 do
-						task.wait(0.5); waited += 0.5
-					end
-					if em.asset and img.Parent then img.Image = em.asset end
-				end)
-			end
+		if token.type == "emoji" and CUSTOM_EMOJIS[token.name] and CUSTOM_EMOJIS[token.name].asset then
+			-- Inline image tag
+			table.insert(parts, string.format('<img src="%s" />', CUSTOM_EMOJIS[token.name].asset))
+		elseif token.type == "emoji" then
+			-- Asset not loaded yet, show syntax
+			table.insert(parts, "<b>" .. token.value .. "</b>")
 		else
-			-- Regular text token
-			local lbl = make("TextLabel", {
-				Size = UDim2.new(0,0,0,0),
-				AutomaticSize = Enum.AutomaticSize.XY,
-				BackgroundTransparency = 1,
-				Text = token.value,
-				Font = FR, TextSize = fontSize,
-				TextColor3 = txtColor,
-				TextXAlignment = Enum.TextXAlignment.Left,
-				TextWrapped = true,
-				ZIndex = baseZIndex,
-			}, parent)
-			if not contentLabel then contentLabel = lbl end
+			-- Escape RichText chars
+			local escaped = token.value
+				:gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;")
+			table.insert(parts, escaped)
 		end
 	end
+	return table.concat(parts)
+end
 
-	return contentLabel
+-- Build content into parent: returns a single RichText TextLabel
+local function buildEmojiContent(parent, tokens, jumbo, baseZIndex, txtColor)
+	local emojiSize = jumbo and 48 or 22
+
+	local lbl = make("TextLabel", {
+		Size = UDim2.new(1,0,0,0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		RichText = true,
+		Text = buildRichText(tokens, jumbo, txtColor),
+		Font = FR,
+		TextSize = jumbo and emojiSize or 14,
+		LineHeight = jumbo and 1.2 or 1.0,
+		TextColor3 = txtColor,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = true,
+		ZIndex = baseZIndex,
+	}, parent)
+
+	return lbl
+end
+
+-- Refresh a content label with updated text (for edit)
+local function refreshEmojiContent(lbl, text, isPending)
+	if not lbl or not lbl.Parent then return end
+	local tokens = parseEmoji(text)
+	local jumbo  = isEmojiOnly(tokens)
+	lbl.Text = buildRichText(tokens, jumbo, isPending and C.txt_pending or C.txt_white)
+	lbl.TextSize = jumbo and 48 or 14
 end
 
 local function renderMessage(senderName, text, isPending, msgTs, isEdited, replyData)
@@ -1342,11 +1315,12 @@ local function renderMessage(senderName, text, isPending, msgTs, isEdited, reply
 			LayoutOrder = 2, ZIndex = 7,
 		}, replyInner)
 
-		-- Quoted text
+		-- Quoted text — strip emoji to plain :name: for the compact preview
+		local previewText = replyData.text:gsub(":([%w_]+):", ":%1:")
 		make("TextLabel", {
 			Size = UDim2.new(1,0,1,0),
 			BackgroundTransparency = 1,
-			Text = replyData.text,
+			Text = previewText,
 			Font = FR, TextSize = 12,
 			TextColor3 = C.txt_muted,
 			TextXAlignment = Enum.TextXAlignment.Left,
@@ -1845,7 +1819,7 @@ btnEdit.MouseButton1Click:Connect(function()
 		})
 		if ok and res and res.StatusCode == 200 then
 			if editContentLabel and editContentLabel.Parent then
-				editContentLabel.Text = newText
+				refreshEmojiContent(editContentLabel, newText, false)
 				local tb = editContentLabel.Parent
 				if tb and not tb:FindFirstChild("EditedTag") then
 					make("TextLabel", {
@@ -1894,76 +1868,78 @@ btnDelete.MouseButton1Click:Connect(function()
 
 	seenKeys[data.key] = true
 
+	-- Find deleted row in renderedRows
+	local rowIdx = nil
+	for i, r in ipairs(renderedRows) do
+		if r.row == data.rowFrame then rowIdx = i; break end
+	end
+
 	-- If the next message is grouped and this was its group leader, promote it
 	if rowIdx then
-		local next = renderedRows[rowIdx + 1]
-		if next and next.isGrouped and next.row and next.row.Parent then
-			-- Find outerCol inside next.row
-			local outerCol = next.row:FindFirstChild("Frame") or next.row:FindFirstChildWhichIsA("Frame")
+		local nextEntry = renderedRows[rowIdx + 1]
+		if nextEntry and nextEntry.isGrouped and nextEntry.row and nextEntry.row.Parent then
+			local outerCol
+			for _, c in ipairs(nextEntry.row:GetChildren()) do
+				if c:IsA("Frame") and c:FindFirstChildWhichIsA("UIListLayout") then
+					outerCol = c; break
+				end
+			end
 			if outerCol then
-				-- Find the msgRow (second child with LayoutOrder 2)
-				for _, child in ipairs(outerCol:GetChildren()) do
-					if child:IsA("Frame") and child.LayoutOrder == 2 then
-						-- Clear the grouped indent and rebuild as full message
-						child:ClearAllChildren()
-						-- Add UIListLayout for horizontal layout
-						make("UIListLayout", {
-							FillDirection = Enum.FillDirection.Horizontal,
-							VerticalAlignment = Enum.VerticalAlignment.Top,
-							Padding = UDim.new(0,12),
-						}, child)
-						pad(8,4,0,0,child)
+				local msgRow
+				for _, c in ipairs(outerCol:GetChildren()) do
+					if c:IsA("Frame") and c.LayoutOrder == 2 then msgRow = c; break end
+				end
+				if msgRow then
+					for _, c in ipairs(msgRow:GetChildren()) do c:Destroy() end
 
-						-- Avatar
-						local isMe = next.sender == USERNAME
-						local avColor = isMe and C.accent or C.roblox_red
-						local avLetter = string.upper(string.sub(next.sender,1,1))
-						local avHolder = make("Frame", {
-							Size = UDim2.new(0,40,0,40),
-							BackgroundTransparency = 1,
-							LayoutOrder = 1, ZIndex = 5,
-						}, child)
-						local avF, avImg, avLbl = makeAv(40, avLetter, avColor, avHolder)
-						avF.Size = UDim2.new(1,0,1,0)
-						applyHeadshot(avImg, avLbl, isMe and MY_HEADSHOT or ROBLOX_HEADSHOT)
+					local isMe = nextEntry.sender == USERNAME
+					local avColor = isMe and C.accent or C.roblox_red
+					local avLetter = string.upper(string.sub(nextEntry.sender,1,1))
 
-						-- Text block with name + existing content
-						local tb = make("Frame", {
-							Size = UDim2.new(1,-64,0,0),
-							AutomaticSize = Enum.AutomaticSize.Y,
-							BackgroundTransparency = 1,
-							LayoutOrder = 2, ZIndex = 5,
-						}, child)
-						make("UIListLayout", {SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0,2)}, tb)
+					make("UIListLayout", {
+						FillDirection = Enum.FillDirection.Horizontal,
+						VerticalAlignment = Enum.VerticalAlignment.Top,
+						Padding = UDim.new(0,12),
+					}, msgRow)
+					pad(8,4,0,0,msgRow)
 
-						-- Name row
-						local nr = make("Frame", {
-							Size = UDim2.new(1,0,0,18),
-							BackgroundTransparency = 1,
-							LayoutOrder = 1, ZIndex = 6,
-						}, tb)
-						make("UIListLayout", {FillDirection = Enum.FillDirection.Horizontal, VerticalAlignment = Enum.VerticalAlignment.Center}, nr)
-						make("TextLabel", {
-							Size = UDim2.new(0,0,1,0),
-							AutomaticSize = Enum.AutomaticSize.X,
-							BackgroundTransparency = 1,
-							Text = isMe and DISPLAY_NAME or next.sender,
-							Font = FB, TextSize = 14,
-							TextColor3 = C.txt_white,
-							TextXAlignment = Enum.TextXAlignment.Left,
-							LayoutOrder = 1, ZIndex = 7,
-						}, nr)
+					local avHolder = make("Frame", {
+						Size = UDim2.new(0,40,0,40), BackgroundTransparency = 1,
+						LayoutOrder = 1, ZIndex = 5,
+					}, msgRow)
+					local avF, avImg, avLbl = makeAv(40, avLetter, avColor, avHolder)
+					avF.Size = UDim2.new(1,0,1,0)
+					applyHeadshot(avImg, avLbl, isMe and MY_HEADSHOT or ROBLOX_HEADSHOT)
 
-						-- Move existing content label into tb
-						if next.content and next.content.Parent then
-							next.content.LayoutOrder = 2
-							next.content.Size = UDim2.new(1,0,0,0)
-							next.content.Parent = tb
-						end
+					local tb = make("Frame", {
+						Size = UDim2.new(1,-64,0,0), AutomaticSize = Enum.AutomaticSize.Y,
+						BackgroundTransparency = 1, LayoutOrder = 2, ZIndex = 5,
+					}, msgRow)
+					make("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,2)}, tb)
 
-						next.isGrouped = false
-						break
+					local nr = make("Frame", {
+						Size = UDim2.new(1,0,0,18), BackgroundTransparency = 1,
+						LayoutOrder = 1, ZIndex = 6,
+					}, tb)
+					make("UIListLayout", {
+						FillDirection=Enum.FillDirection.Horizontal,
+						VerticalAlignment=Enum.VerticalAlignment.Center,
+					}, nr)
+					make("TextLabel", {
+						Size = UDim2.new(0,0,1,0), AutomaticSize = Enum.AutomaticSize.X,
+						BackgroundTransparency = 1,
+						Text = isMe and DISPLAY_NAME or nextEntry.sender,
+						Font = FB, TextSize = 14, TextColor3 = C.txt_white,
+						TextXAlignment = Enum.TextXAlignment.Left,
+						LayoutOrder = 1, ZIndex = 7,
+					}, nr)
+
+					if nextEntry.content and nextEntry.content.Parent then
+						nextEntry.content.LayoutOrder = 2
+						nextEntry.content.Size = UDim2.new(1,0,0,0)
+						nextEntry.content.Parent = tb
 					end
+					nextEntry.isGrouped = false
 				end
 			end
 		end
