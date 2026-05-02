@@ -196,7 +196,6 @@ sendSound.Parent = game:GetService("SoundService")
 
 -- Download all assets async so no lag spike on inject
 task.spawn(function()
-	-- Icons: if cached they return instantly, if not they download in parallel
 	local function dl(url, path, label, callback)
 		task.spawn(function()
 			local asset = downloadAsset(url, path, label)
@@ -937,16 +936,19 @@ local inputBox = make("TextBox", {
 }, inputWrap)
 make("UIPadding", {PaddingRight = UDim.new(0,8)}, inputBox)
 
--- Grow inputWrap height with text, cap at 120px
-inputBox:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-	local newH = math.min(inputBox.AbsoluteSize.Y + 8, 120)
-	newH = math.max(newH, 44)
-	inputWrap.Size = UDim2.new(1,-32,0,newH)
-	inputBox.Size = UDim2.new(1,-64,0,newH-8)
-	inputArea.Size = UDim2.new(1,0,0,newH+20)
-	inputArea.Position = UDim2.new(0,0,1,-(newH+20))
-	-- Also adjust msgScroll to compensate
-	msgScroll.Size = UDim2.new(1,0,1,-(168 + (newH - 44)))
+-- Grow inputWrap height with content, cap at 120px
+local function updateInputHeight()
+	local textH = inputBox.TextBounds.Y
+	local newH  = math.clamp(textH + 16, 44, 120)
+	inputWrap.Size     = UDim2.new(1,-32, 0, newH)
+	inputBox.Size      = UDim2.new(1,-64, 0, newH - 8)
+	inputArea.Size     = UDim2.new(1,0,   0, newH + 16)
+	inputArea.Position = UDim2.new(0,0,   1, -(newH + 16))
+	msgScroll.Size     = UDim2.new(1,0,   1, -(126 + (newH - 44)))
+end
+
+inputBox:GetPropertyChangedSignal("Text"):Connect(function()
+	task.defer(updateInputHeight)
 end)
 
 local sendBtn = make("TextButton", {
@@ -1151,58 +1153,105 @@ local function isEmojiOnly(tokens)
 	return false
 end
 
--- Build a RichText string with inline emoji images and plain text
--- Jumbo: emoji rendered at 48px. Normal: 22px inline with text
-local function buildRichText(tokens, jumbo, txtColor)
-	local size = jumbo and 48 or 22
-	local parts = {}
-	for _, token in ipairs(tokens) do
-		if token.type == "emoji" and CUSTOM_EMOJIS[token.name] and CUSTOM_EMOJIS[token.name].asset then
-			-- Inline image tag
-			table.insert(parts, string.format('<img src="%s" />', CUSTOM_EMOJIS[token.name].asset))
-		elseif token.type == "emoji" then
-			-- Asset not loaded yet, show syntax
-			table.insert(parts, "<b>" .. token.value .. "</b>")
-		else
-			-- Escape RichText chars
-			local escaped = token.value
-				:gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;")
-			table.insert(parts, escaped)
-		end
-	end
-	return table.concat(parts)
-end
-
--- Build content into parent: returns a single RichText TextLabel
+-- Build rich content: returns a Frame containing text + inline emoji ImageLabels
+-- Uses a single TextLabel per text segment and ImageLabels for emoji
+-- All wrapped in a horizontal flow using a Frame with UIListLayout
 local function buildEmojiContent(parent, tokens, jumbo, baseZIndex, txtColor)
 	local emojiSize = jumbo and 48 or 22
+	local fontSize  = jumbo and 36 or 14
 
-	local lbl = make("TextLabel", {
+	-- Check if it's pure text (no emoji tokens at all) — use single label for perf
+	local hasEmoji = false
+	for _, t in ipairs(tokens) do
+		if t.type == "emoji" then hasEmoji = true; break end
+	end
+
+	if not hasEmoji then
+		-- Pure text: single wrapping TextLabel
+		local lbl = make("TextLabel", {
+			Size = UDim2.new(1,0,0,0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			Text = tokens[1] and tokens[1].value or "",
+			Font = FR, TextSize = fontSize,
+			TextColor3 = txtColor,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			TextWrapped = true,
+			ZIndex = baseZIndex,
+		}, parent)
+		return lbl
+	end
+
+	-- Mixed/emoji: horizontal flow frame
+	local flow = make("Frame", {
 		Size = UDim2.new(1,0,0,0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
-		RichText = true,
-		Text = buildRichText(tokens, jumbo, txtColor),
-		Font = FR,
-		TextSize = jumbo and emojiSize or 14,
-		LineHeight = jumbo and 1.2 or 1.0,
-		TextColor3 = txtColor,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		TextYAlignment = Enum.TextYAlignment.Top,
-		TextWrapped = true,
 		ZIndex = baseZIndex,
 	}, parent)
+	make("UIListLayout", {
+		FillDirection = Enum.FillDirection.Horizontal,
+		VerticalAlignment = Enum.VerticalAlignment.Center,
+		Padding = UDim.new(0,2),
+		Wraps = true,
+	}, flow)
 
-	return lbl
+	local firstLbl = nil
+	for _, token in ipairs(tokens) do
+		if token.type == "emoji" and CUSTOM_EMOJIS[token.name] then
+			local em = CUSTOM_EMOJIS[token.name]
+			local imgF = make("Frame", {
+				Size = UDim2.new(0,emojiSize,0,emojiSize),
+				BackgroundTransparency = 1,
+				ZIndex = baseZIndex+1,
+			}, flow)
+			local img = make("ImageLabel", {
+				Size = UDim2.new(1,0,1,0),
+				BackgroundTransparency = 1,
+				Image = em.asset or "",
+				ZIndex = baseZIndex+2,
+			}, imgF)
+			if not em.asset then
+				task.spawn(function()
+					local w = 0
+					while not em.asset and w < 10 do task.wait(0.3); w+=0.3 end
+					if em.asset and img.Parent then img.Image = em.asset end
+				end)
+			end
+		else
+			local lbl = make("TextLabel", {
+				Size = UDim2.new(0,0,0,fontSize+4),
+				AutomaticSize = Enum.AutomaticSize.X,
+				BackgroundTransparency = 1,
+				Text = token.value,
+				Font = FR, TextSize = fontSize,
+				TextColor3 = txtColor,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextWrapped = false,
+				ZIndex = baseZIndex+1,
+			}, flow)
+			if not firstLbl then firstLbl = lbl end
+		end
+	end
+
+	return firstLbl or flow
 end
 
--- Refresh a content label with updated text (for edit)
+-- Refresh content label text (edit case — for pure text only)
 local function refreshEmojiContent(lbl, text, isPending)
 	if not lbl or not lbl.Parent then return end
+	local color = isPending and C.txt_pending or C.txt_white
 	local tokens = parseEmoji(text)
-	local jumbo  = isEmojiOnly(tokens)
-	lbl.Text = buildRichText(tokens, jumbo, isPending and C.txt_pending or C.txt_white)
-	lbl.TextSize = jumbo and 48 or 14
+	local hasEmoji = false
+	for _, t in ipairs(tokens) do if t.type == "emoji" then hasEmoji = true; break end end
+	if not hasEmoji and lbl:IsA("TextLabel") then
+		lbl.Text = text
+		lbl.TextColor3 = color
+	else
+		-- Can't easily refresh mixed flow — just update text color
+		lbl.TextColor3 = color
+	end
 end
 
 local function renderMessage(senderName, text, isPending, msgTs, isEdited, replyData)
@@ -1429,7 +1478,7 @@ local function renderMessage(senderName, text, isPending, msgTs, isEdited, reply
 		end
 	end
 
-	local result = {content = content, sender = senderName, row = row, isGrouped = isGrouped}
+	local result = {content = content, sender = senderName, row = row, isGrouped = isGrouped, rawText = text, msgTs = msgTs}
 	table.insert(renderedRows, result)
 	return result
 end
@@ -1475,7 +1524,7 @@ local contextMenu = make("Frame", {
 	BackgroundColor3 = Color3.fromRGB(12, 12, 14),
 	BorderSizePixel = 0,
 	Visible = false,
-	ZIndex = 100,
+	ZIndex = 200,
 }, gui)
 corner(8, contextMenu)
 make("UIStroke", {Color = Color3.fromRGB(30,30,35), Thickness = 1}, contextMenu)
@@ -1548,11 +1597,26 @@ local ctxTargetData = nil  -- holds {key, contentLabel, rowFrame, text}
 
 local function showContextMenu(x, y, data)
 	ctxTargetData = data
-	-- Position near cursor but keep inside screen
+	local isOwn = data.sender == USERNAME
+
+	-- Show/hide buttons based on ownership
+	btnEdit.Visible   = isOwn
+	btnDelete.Visible = isOwn
+	-- Divider between edit and delete only shown for own messages
+	for _, c in ipairs(contextMenu:GetChildren()) do
+		if c:IsA("Frame") and c.LayoutOrder == 4 then
+			c.Visible = isOwn
+		end
+	end
+
+	-- Resize menu: own = 4 buttons + divider = 144px, others = 2 buttons = 76px
+	contextMenu.Size = UDim2.new(0, 160, 0, isOwn and 144 or 76)
+
 	local sw = workspace.CurrentCamera.ViewportSize.X
 	local sh = workspace.CurrentCamera.ViewportSize.Y
+	local menuH = isOwn and 144 or 76
 	local mx = math.min(x, sw - 168)
-	local my = math.min(y, sh - 120)
+	local my = math.min(y, sh - menuH - 8)
 	contextMenu.Position = UDim2.new(0, mx, 0, my)
 	contextMenu.Visible = true
 end
@@ -1643,15 +1707,16 @@ local function firebasePoll()
 			seenKeys[msg.key] = true
 			local rendered = renderMessage(msg.sender, msg.text, false, msg.ts, msg.edited == true, msg.replyData)
 
-			if msg.sender == USERNAME and rendered and rendered.row then
-				local msgKey  = msg.key
-				local msgText = msg.text
-				local msgTs   = msg.ts
+			if rendered and rendered.row then
+				local msgKey    = msg.key
+				local msgText   = msg.text
+				local msgTs     = msg.ts
+				local msgSender = msg.sender
 				attachHoldDetection(rendered.row, function()
 					return {
 						key          = msgKey,
 						text         = msgText,
-						sender       = USERNAME,
+						sender       = msgSender,
 						contentLabel = rendered.content,
 						rowFrame     = rendered.row,
 						ts           = msgTs,
@@ -1934,11 +1999,25 @@ btnDelete.MouseButton1Click:Connect(function()
 						LayoutOrder = 1, ZIndex = 7,
 					}, nr)
 
-					if nextEntry.content and nextEntry.content.Parent then
-						nextEntry.content.LayoutOrder = 2
-						nextEntry.content.Size = UDim2.new(1,0,0,0)
-						nextEntry.content.Parent = tb
+					-- Rebuild content from rawText instead of moving the old label
+					local rawText = nextEntry.rawText or ""
+					local tokens  = parseEmoji(rawText)
+					local jumbo   = isEmojiOnly(tokens)
+					local wrapper = make("Frame", {
+						Size = UDim2.new(1,0,0,0),
+						AutomaticSize = Enum.AutomaticSize.Y,
+						BackgroundTransparency = 1,
+						LayoutOrder = 2, ZIndex = 6,
+					}, tb)
+					local newContent = buildEmojiContent(wrapper, tokens, jumbo, 7, C.txt_white)
+					nextEntry.content = newContent
+
+					-- Destroy old grouped content if still exists
+					if nextEntry.content and nextEntry.content.Parent
+						and nextEntry.content.Parent ~= tb then
+						nextEntry.content.Parent:Destroy()
 					end
+
 					nextEntry.isGrouped = false
 				end
 			end
