@@ -1153,105 +1153,89 @@ local function isEmojiOnly(tokens)
 	return false
 end
 
--- Build rich content: returns a Frame containing text + inline emoji ImageLabels
--- Uses a single TextLabel per text segment and ImageLabels for emoji
--- All wrapped in a horizontal flow using a Frame with UIListLayout
-local function buildEmojiContent(parent, tokens, jumbo, baseZIndex, txtColor)
+-- Build a RichText string — emoji become <img> tags, text is escaped
+-- getcustomasset returns rbxasset:// URLs which RichText img supports
+local function tokensToRichText(tokens, jumbo)
 	local emojiSize = jumbo and 48 or 22
-	local fontSize  = jumbo and 36 or 14
-
-	-- Check if it's pure text (no emoji tokens at all) — use single label for perf
-	local hasEmoji = false
-	for _, t in ipairs(tokens) do
-		if t.type == "emoji" then hasEmoji = true; break end
+	local parts = {}
+	for _, token in ipairs(tokens) do
+		if token.type == "emoji" then
+			local em = CUSTOM_EMOJIS[token.name]
+			if em and em.asset then
+				-- Roblox RichText img tag: <img src="" /> with rbxasset:// URL
+				table.insert(parts, string.format(
+					'<img src="%s" width="%d" height="%d" />',
+					em.asset, emojiSize, emojiSize
+				))
+			else
+				-- Not loaded yet — show bold syntax name as placeholder
+				table.insert(parts, "<b>" .. token.value .. "</b>")
+			end
+		else
+			-- Escape RichText special characters
+			local esc = token.value
+				:gsub("&", "&amp;")
+				:gsub("<", "&lt;")
+				:gsub(">", "&gt;")
+				:gsub('"', "&quot;")
+			table.insert(parts, esc)
+		end
 	end
+	return table.concat(parts)
+end
 
-	if not hasEmoji then
-		-- Pure text: single wrapping TextLabel
-		local lbl = make("TextLabel", {
-			Size = UDim2.new(1,0,0,0),
-			AutomaticSize = Enum.AutomaticSize.Y,
-			BackgroundTransparency = 1,
-			Text = tokens[1] and tokens[1].value or "",
-			Font = FR, TextSize = fontSize,
-			TextColor3 = txtColor,
-			TextXAlignment = Enum.TextXAlignment.Left,
-			TextYAlignment = Enum.TextYAlignment.Top,
-			TextWrapped = true,
-			ZIndex = baseZIndex,
-		}, parent)
-		return lbl
-	end
+-- Build content label into parent using RichText for inline emoji
+local function buildEmojiContent(parent, tokens, jumbo, baseZIndex, txtColor)
+	local fontSize = jumbo and 48 or 14
 
-	-- Mixed/emoji: horizontal flow frame
-	local flow = make("Frame", {
+	local lbl = make("TextLabel", {
 		Size = UDim2.new(1,0,0,0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
+		RichText = true,
+		Text = tokensToRichText(tokens, jumbo),
+		Font = FR,
+		TextSize = fontSize,
+		TextColor3 = txtColor,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = true,
 		ZIndex = baseZIndex,
 	}, parent)
-	make("UIListLayout", {
-		FillDirection = Enum.FillDirection.Horizontal,
-		VerticalAlignment = Enum.VerticalAlignment.Center,
-		Padding = UDim.new(0,2),
-		Wraps = true,
-	}, flow)
 
-	local firstLbl = nil
+	-- If any emoji assets aren't loaded yet, refresh once they are
 	for _, token in ipairs(tokens) do
-		if token.type == "emoji" and CUSTOM_EMOJIS[token.name] then
+		if token.type == "emoji" then
 			local em = CUSTOM_EMOJIS[token.name]
-			local imgF = make("Frame", {
-				Size = UDim2.new(0,emojiSize,0,emojiSize),
-				BackgroundTransparency = 1,
-				ZIndex = baseZIndex+1,
-			}, flow)
-			local img = make("ImageLabel", {
-				Size = UDim2.new(1,0,1,0),
-				BackgroundTransparency = 1,
-				Image = em.asset or "",
-				ZIndex = baseZIndex+2,
-			}, imgF)
-			if not em.asset then
+			if em and not em.asset then
 				task.spawn(function()
-					local w = 0
-					while not em.asset and w < 10 do task.wait(0.3); w+=0.3 end
-					if em.asset and img.Parent then img.Image = em.asset end
+					local waited = 0
+					while not em.asset and waited < 10 do
+						task.wait(0.3); waited += 0.3
+					end
+					-- Rebuild full text now that asset is available
+					if lbl.Parent then
+						lbl.Text = tokensToRichText(tokens, jumbo)
+					end
 				end)
+				break -- one watcher is enough, it rebuilds all tokens
 			end
-		else
-			local lbl = make("TextLabel", {
-				Size = UDim2.new(0,0,0,fontSize+4),
-				AutomaticSize = Enum.AutomaticSize.X,
-				BackgroundTransparency = 1,
-				Text = token.value,
-				Font = FR, TextSize = fontSize,
-				TextColor3 = txtColor,
-				TextXAlignment = Enum.TextXAlignment.Left,
-				TextWrapped = false,
-				ZIndex = baseZIndex+1,
-			}, flow)
-			if not firstLbl then firstLbl = lbl end
 		end
 	end
 
-	return firstLbl or flow
+	return lbl
 end
 
--- Refresh content label text (edit case — for pure text only)
+-- Refresh an existing content label with new text (for edit)
 local function refreshEmojiContent(lbl, text, isPending)
 	if not lbl or not lbl.Parent then return end
-	local color = isPending and C.txt_pending or C.txt_white
+	local color  = isPending and C.txt_pending or C.txt_white
 	local tokens = parseEmoji(text)
-	local hasEmoji = false
-	for _, t in ipairs(tokens) do if t.type == "emoji" then hasEmoji = true; break end end
-	if not hasEmoji and lbl:IsA("TextLabel") then
-		lbl.Text = text
-		lbl.TextColor3 = color
-	else
-		-- Can't easily refresh mixed flow — just update text color
-		lbl.TextColor3 = color
-	end
+	local jumbo  = isEmojiOnly(tokens)
+	lbl.RichText = true
+	lbl.Text      = tokensToRichText(tokens, jumbo)
+	lbl.TextSize  = jumbo and 48 or 14
+	lbl.TextColor3 = color
 end
 
 local function renderMessage(senderName, text, isPending, msgTs, isEdited, replyData)
@@ -1999,7 +1983,6 @@ btnDelete.MouseButton1Click:Connect(function()
 						LayoutOrder = 1, ZIndex = 7,
 					}, nr)
 
-					-- Rebuild content from rawText instead of moving the old label
 					local rawText = nextEntry.rawText or ""
 					local tokens  = parseEmoji(rawText)
 					local jumbo   = isEmojiOnly(tokens)
@@ -2010,14 +1993,7 @@ btnDelete.MouseButton1Click:Connect(function()
 						LayoutOrder = 2, ZIndex = 6,
 					}, tb)
 					local newContent = buildEmojiContent(wrapper, tokens, jumbo, 7, C.txt_white)
-					nextEntry.content = newContent
-
-					-- Destroy old grouped content if still exists
-					if nextEntry.content and nextEntry.content.Parent
-						and nextEntry.content.Parent ~= tb then
-						nextEntry.content.Parent:Destroy()
-					end
-
+					nextEntry.content  = newContent
 					nextEntry.isGrouped = false
 				end
 			end
@@ -2110,7 +2086,24 @@ local function sendMessage()
 end
 
 sendBtn.MouseButton1Click:Connect(sendMessage)
-inputBox.FocusLost:Connect(function(enter) if enter then sendMessage() end end)
+
+-- MultiLine TextBox: Enter alone sends, Shift+Enter adds newline
+inputBox.FocusLost:Connect(function(enter)
+	if enter and not (editingBar and editingBar.Parent) then
+		sendMessage()
+	end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == Enum.KeyCode.Return
+		and not UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+		and not UserInputService:IsKeyDown(Enum.KeyCode.RightShift) then
+		if not (editingBar and editingBar.Parent) then
+			sendMessage()
+		end
+	end
+end)
 
 -- =============================================
 -- DRAG (free, no clamping)
