@@ -116,19 +116,18 @@ local FOLDER_ROOT    = "DiscordBlox"
 local FOLDER_THUMBS  = FOLDER_ROOT .. "/Thumbnails"
 local FOLDER_SOUNDS  = FOLDER_ROOT .. "/Sounds"
 local FOLDER_ICONS   = FOLDER_ROOT .. "/Icons"
-local FOLDER_EMOJIS  = FOLDER_ROOT .. "/Emojis"
 
--- Custom emoji definitions: name -> {url, asset (nil until downloaded)}
+-- Custom emoji definitions: name -> rbxassetid (no download needed)
 local CUSTOM_EMOJIS = {
-	ayes     = {url="https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/uh/sm/1777545766347_wb0b6z_ayes_1484424415327551629.png",    asset=nil},
-	easy     = {url="https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/0i/f9/1777545769739_hblqyc_easy_1484424459032072232.png",    asset=nil},
-	normal   = {url="https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/ur/ee/1777545774188_smnfkx_normal_1477582118434639995.png",  asset=nil},
-	aok      = {url="https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/pm/l1/1777545777009_hndk2t_aok_1494283694834192504.png",     asset=nil},
-	hard     = {url="https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/0f/qw/1777545780269_jtz6kt_hard_1484425388380651521.png",    asset=nil},
-	ano      = {url="https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/q9/q7/1777545785246_dknn0f_ano_1494152321632964648.png",     asset=nil},
-	harder   = {url="https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/q9/lm/1777545787497_1hju7e_harder_1488490934151806987.png",  asset=nil},
-	insane   = {url="https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/hz/8q/1777545789235_tzclp9_insane_1488491290877493339.png",  asset=nil},
-	extremedemon = {url="https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/2e/ij/1777545814486_fop085_extremedemon_1488491016976601119.png", asset=nil},
+	extremedemon = {asset = "rbxassetid://139619709480086"},
+	insane        = {asset = "rbxassetid://82592159504933"},
+	harder        = {asset = "rbxassetid://129415995354865"},
+	ano           = {asset = "rbxassetid://80241994833696"},
+	hard          = {asset = "rbxassetid://91932716779860"},
+	normal        = {asset = "rbxassetid://116101584722307"},
+	aok           = {asset = "rbxassetid://127165613136301"},
+	ayes          = {asset = "rbxassetid://94931283338509"},
+	easy          = {asset = "rbxassetid://140636781068646"},
 }
 
 local function ensureFolder(path)
@@ -142,7 +141,6 @@ ensureFolder(FOLDER_ROOT)
 ensureFolder(FOLDER_THUMBS)
 ensureFolder(FOLDER_SOUNDS)
 ensureFolder(FOLDER_ICONS)
-ensureFolder(FOLDER_EMOJIS)
 
 local function downloadAsset(url, path, label)
 	if not _getcustomasset then
@@ -250,14 +248,7 @@ task.spawn(function()
 			end
 		end)
 
-	-- Download custom emojis
-	for name, data in pairs(CUSTOM_EMOJIS) do
-		local n, d = name, data
-		task.spawn(function()
-			local asset = downloadAsset(d.url, FOLDER_EMOJIS .. "/" .. n .. ".png", "Emoji:" .. n)
-			if asset then d.asset = asset end
-		end)
-	end
+	-- Custom emojis use direct Roblox asset IDs — no download needed
 end)
 
 -- =============================================
@@ -464,6 +455,41 @@ make("Frame", {
 	BackgroundColor3 = C.bg_hover,
 	BorderSizePixel = 0, ZIndex = 3,
 }, colA)
+
+-- Friends button
+local friendsBox = make("TextButton", {
+	Size = UDim2.new(0,48,0,48),
+	Position = UDim2.new(0.5,-24,0,82),
+	BackgroundColor3 = C.bg_hover,
+	BorderSizePixel = 0, ZIndex = 3,
+	Text = "", AutoButtonColor = false,
+}, colA)
+corner(16, friendsBox)
+
+make("TextLabel", {
+	Size = UDim2.new(1,0,1,0),
+	BackgroundTransparency = 1,
+	Text = "+",
+	Font = FB, TextSize = 26,
+	TextColor3 = C.txt_muted,
+	ZIndex = 4,
+}, friendsBox)
+
+-- Friend request badge (shown when there are pending requests)
+local friendBadge = make("Frame", {
+	Size = UDim2.new(0,16,0,16),
+	Position = UDim2.new(1,-4,0,-4),
+	BackgroundColor3 = Color3.fromRGB(237,66,69),
+	BorderSizePixel = 0, ZIndex = 5,
+	Visible = false,
+}, friendsBox)
+corner(8, friendBadge)
+local friendBadgeLabel = make("TextLabel", {
+	Size = UDim2.new(1,0,1,0),
+	BackgroundTransparency = 1,
+	Text = "0", Font = FB, TextSize = 9,
+	TextColor3 = C.txt_white, ZIndex = 6,
+}, friendBadge)
 
 -- Right border of colA
 make("Frame", {
@@ -1161,23 +1187,17 @@ local function tokensToRichText(tokens, jumbo)
 	for _, token in ipairs(tokens) do
 		if token.type == "emoji" then
 			local em = CUSTOM_EMOJIS[token.name]
-			if em and em.asset then
-				-- Roblox RichText img tag: <img src="" /> with rbxasset:// URL
+			if em then
 				table.insert(parts, string.format(
 					'<img src="%s" width="%d" height="%d" />',
 					em.asset, emojiSize, emojiSize
 				))
 			else
-				-- Not loaded yet — show bold syntax name as placeholder
 				table.insert(parts, "<b>" .. token.value .. "</b>")
 			end
 		else
-			-- Escape RichText special characters
 			local esc = token.value
-				:gsub("&", "&amp;")
-				:gsub("<", "&lt;")
-				:gsub(">", "&gt;")
-				:gsub('"', "&quot;")
+				:gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;"):gsub('"',"&quot;")
 			table.insert(parts, esc)
 		end
 	end
@@ -1187,42 +1207,19 @@ end
 -- Build content label into parent using RichText for inline emoji
 local function buildEmojiContent(parent, tokens, jumbo, baseZIndex, txtColor)
 	local fontSize = jumbo and 48 or 14
-
 	local lbl = make("TextLabel", {
 		Size = UDim2.new(1,0,0,0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		BackgroundTransparency = 1,
 		RichText = true,
 		Text = tokensToRichText(tokens, jumbo),
-		Font = FR,
-		TextSize = fontSize,
+		Font = FR, TextSize = fontSize,
 		TextColor3 = txtColor,
 		TextXAlignment = Enum.TextXAlignment.Left,
 		TextYAlignment = Enum.TextYAlignment.Top,
 		TextWrapped = true,
 		ZIndex = baseZIndex,
 	}, parent)
-
-	-- If any emoji assets aren't loaded yet, refresh once they are
-	for _, token in ipairs(tokens) do
-		if token.type == "emoji" then
-			local em = CUSTOM_EMOJIS[token.name]
-			if em and not em.asset then
-				task.spawn(function()
-					local waited = 0
-					while not em.asset and waited < 10 do
-						task.wait(0.3); waited += 0.3
-					end
-					-- Rebuild full text now that asset is available
-					if lbl.Parent then
-						lbl.Text = tokensToRichText(tokens, jumbo)
-					end
-				end)
-				break -- one watcher is enough, it rebuilds all tokens
-			end
-		end
-	end
-
 	return lbl
 end
 
@@ -2128,8 +2125,754 @@ UserInputService.InputEnded:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
 end)
 
--- POLL LOOP
 -- =============================================
+-- FIREBASE PATHS FOR FRIENDS SYSTEM
+-- =============================================
+local FB_USERS    = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/users"
+local FB_REQUESTS = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/friend_requests"
+local FB_FRIENDS  = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/friends"
+local FB_DMS      = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/dms"
+local FB_LASTSEEN = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/lastseen"
+local GLOBAL_OWNER = "noboestnobo"
+
+local function getDMKey(a, b)
+	if a < b then return a.."_"..b else return b.."_"..a end
+end
+
+-- Register user on launch
+task.spawn(function()
+	pcall(httpRequest, {
+		Url = FB_USERS.."/"..USERNAME..".json", Method = "PUT",
+		Headers = {["Content-Type"]="application/json"},
+		Body = HttpService:JSONEncode({
+			username    = USERNAME,
+			displayName = DISPLAY_NAME,
+			lastOnline  = os.time(),
+			headshot    = "rbxthumb://type=AvatarHeadShot&id="..tostring(player.UserId).."&w=60&h=60",
+		}),
+	})
+end)
+
+-- Keep lastOnline fresh
+task.spawn(function()
+	while gui and gui.Parent do
+		task.wait(30)
+		pcall(httpRequest, {
+			Url = FB_USERS.."/"..USERNAME.."/lastOnline.json", Method = "PUT",
+			Headers = {["Content-Type"]="application/json"},
+			Body = tostring(os.time()),
+		})
+	end
+end)
+
+-- =============================================
+-- FRIENDS SCREEN UI
+-- =============================================
+local friendsScreen = make("Frame", {
+	Size = UDim2.new(1,-312,1,0),
+	Position = UDim2.new(0,312,0,0),
+	BackgroundColor3 = C.bg_chat,
+	BorderSizePixel = 0, ZIndex = 2,
+	Visible = false,
+}, win)
+
+-- Header
+local fsHead = make("Frame", {
+	Size = UDim2.new(1,0,0,48),
+	BackgroundColor3 = C.bg_chat,
+	BorderSizePixel = 0, ZIndex = 3,
+}, friendsScreen)
+make("Frame", {
+	Size=UDim2.new(1,0,0,1), Position=UDim2.new(0,0,1,-1),
+	BackgroundColor3=C.divider, BorderSizePixel=0, ZIndex=4,
+}, fsHead)
+make("TextLabel", {
+	Size=UDim2.new(0,80,1,0), Position=UDim2.new(0,16,0,0),
+	BackgroundTransparency=1, Text="Friends",
+	Font=FB, TextSize=16, TextColor3=C.txt_white,
+	TextXAlignment=Enum.TextXAlignment.Left, ZIndex=4,
+}, fsHead)
+
+-- Tabs
+local tabNames  = {"All","Pending","Add Friend"}
+local tabBtns   = {}
+local tabLines  = {}
+local tabFrames = {}
+local activeTab = "All"
+
+local tabRow = make("Frame", {
+	Size=UDim2.new(1,-96,1,0), Position=UDim2.new(0,96,0,0),
+	BackgroundTransparency=1, ZIndex=4,
+}, fsHead)
+make("UIListLayout", {
+	FillDirection=Enum.FillDirection.Horizontal,
+	VerticalAlignment=Enum.VerticalAlignment.Center,
+	Padding=UDim.new(0,2),
+}, tabRow)
+
+local fsBody = make("Frame", {
+	Size=UDim2.new(1,0,1,-48), Position=UDim2.new(0,0,0,48),
+	BackgroundTransparency=1, ZIndex=3,
+}, friendsScreen)
+
+local function switchTab(name)
+	activeTab = name
+	for _, n in ipairs(tabNames) do
+		if tabBtns[n]  then tabBtns[n].TextColor3  = (n==name) and C.txt_white or C.txt_muted end
+		if tabLines[n] then tabLines[n].Visible     = (n==name) end
+		if tabFrames[n]then tabFrames[n].Visible    = (n==name) end
+	end
+end
+
+for _, name in ipairs(tabNames) do
+	local btn = make("TextButton", {
+		Size=UDim2.new(0,88,1,0),
+		BackgroundTransparency=1,
+		Text=name, Font=FM, TextSize=13,
+		TextColor3=C.txt_muted,
+		AutoButtonColor=false, ZIndex=5,
+	}, tabRow)
+	local ul = make("Frame", {
+		Size=UDim2.new(1,0,0,2), Position=UDim2.new(0,0,1,-2),
+		BackgroundColor3=C.accent, BorderSizePixel=0, ZIndex=6,
+		Visible=false,
+	}, btn)
+	tabBtns[name]  = btn
+	tabLines[name] = ul
+	btn.MouseButton1Click:Connect(function() switchTab(name) end)
+end
+
+-- ALL tab
+local allScroll = make("ScrollingFrame", {
+	Size=UDim2.new(1,0,1,0),
+	BackgroundTransparency=1, BorderSizePixel=0,
+	ScrollBarThickness=4, ScrollBarImageColor3=C.scrollbar,
+	CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
+	Visible=true, ZIndex=4,
+}, fsBody)
+tabFrames["All"] = allScroll
+make("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,2)}, allScroll)
+pad(8,8,16,16, allScroll)
+
+-- PENDING tab
+local pendScroll = make("ScrollingFrame", {
+	Size=UDim2.new(1,0,1,0),
+	BackgroundTransparency=1, BorderSizePixel=0,
+	ScrollBarThickness=4, ScrollBarImageColor3=C.scrollbar,
+	CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
+	Visible=false, ZIndex=4,
+}, fsBody)
+tabFrames["Pending"] = pendScroll
+make("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,2)}, pendScroll)
+pad(8,8,16,16, pendScroll)
+
+-- ADD FRIEND tab
+local addFrame = make("Frame", {
+	Size=UDim2.new(1,0,1,0),
+	BackgroundTransparency=1, Visible=false, ZIndex=4,
+}, fsBody)
+tabFrames["Add Friend"] = addFrame
+
+make("TextLabel", {
+	Size=UDim2.new(1,-32,0,24), Position=UDim2.new(0,16,0,24),
+	BackgroundTransparency=1, Text="ADD FRIEND",
+	Font=FB, TextSize=13, TextColor3=C.txt_white,
+	TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5,
+}, addFrame)
+make("TextLabel", {
+	Size=UDim2.new(1,-32,0,16), Position=UDim2.new(0,16,0,50),
+	BackgroundTransparency=1,
+	Text="You can add friends with their Roblox username.",
+	Font=FR, TextSize=12, TextColor3=C.txt_muted,
+	TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5,
+}, addFrame)
+
+local addWrap = make("Frame", {
+	Size=UDim2.new(1,-32,0,44), Position=UDim2.new(0,16,0,76),
+	BackgroundColor3=C.bg_input, BorderSizePixel=0, ZIndex=5,
+}, addFrame)
+corner(8, addWrap)
+
+local addInput = make("TextBox", {
+	Size=UDim2.new(1,-96,1,0), Position=UDim2.new(0,12,0,0),
+	BackgroundTransparency=1, Text="",
+	PlaceholderText="Enter a username",
+	Font=FR, TextSize=14, TextColor3=C.txt_white,
+	PlaceholderColor3=C.txt_muted, ClearTextOnFocus=false, ZIndex=6,
+}, addWrap)
+
+local addBtn2 = make("TextButton", {
+	Size=UDim2.new(0,72,0,32), Position=UDim2.new(1,-76,0.5,-16),
+	BackgroundColor3=C.accent, BorderSizePixel=0,
+	Text="Send", Font=FM, TextSize=13,
+	TextColor3=C.txt_white, AutoButtonColor=false, ZIndex=6,
+}, addWrap)
+corner(6, addBtn2)
+
+local addStatus = make("TextLabel", {
+	Size=UDim2.new(1,-32,0,20), Position=UDim2.new(0,16,0,128),
+	BackgroundTransparency=1, Text="",
+	Font=FR, TextSize=12, TextColor3=C.txt_muted,
+	TextXAlignment=Enum.TextXAlignment.Left, ZIndex=5,
+}, addFrame)
+
+switchTab("All")
+
+-- =============================================
+-- CHANNEL STATE
+-- =============================================
+local currentChannel  = "global"
+local channelData     = {}  -- dmKey -> {scroll, seenKeys, msgOrder}
+local activeDMSlots   = {}  -- dmKey -> {entry, lastMsgLabel, friendName}
+local knownFriends    = {}
+local knownPending    = {}
+
+local function showFriendsScreen()
+	colC.Visible = false
+	friendsScreen.Visible = true
+	friendsBox.BackgroundColor3 = C.accent
+end
+local function showChatScreen()
+	friendsScreen.Visible = false
+	colC.Visible = true
+	friendsBox.BackgroundColor3 = C.bg_hover
+end
+
+friendsBox.MouseButton1Click:Connect(function()
+	if friendsScreen.Visible then showChatScreen() else showFriendsScreen() end
+end)
+
+-- =============================================
+-- PRIVATE CHANNEL SCROLL
+-- =============================================
+local function getChannelData(dmKey)
+	if not channelData[dmKey] then
+		local sc = make("ScrollingFrame", {
+			Size=UDim2.new(1,0,1,-130), Position=UDim2.new(0,0,0,48),
+			BackgroundTransparency=1, BorderSizePixel=0,
+			ScrollBarThickness=4, ScrollBarImageColor3=C.scrollbar,
+			CanvasSize=UDim2.new(0,0,0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
+			Visible=false, ZIndex=3,
+		}, colC)
+		local lay = make("UIListLayout", {
+			SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,0),
+		}, sc)
+		pad(4,4,16,16, sc)
+		lay:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+			task.defer(function()
+				sc.CanvasPosition = Vector2.new(0, sc.AbsoluteCanvasSize.Y)
+			end)
+		end)
+		channelData[dmKey] = {scroll=sc, seenKeys={}, msgOrder=0}
+	end
+	return channelData[dmKey]
+end
+
+-- Header name label reference (the "Roblox" label in chat header)
+local chatHeaderNameLabel
+task.defer(function()
+	for _, c in ipairs(header:GetChildren()) do
+		if c:IsA("TextLabel") and c.Text == "Roblox" then
+			chatHeaderNameLabel = c; break
+		end
+	end
+end)
+
+local function switchToChannel(dmKey, friendName)
+	currentChannel = dmKey
+	msgScroll.Visible = false
+	for k, cd in pairs(channelData) do cd.scroll.Visible = (k==dmKey) end
+	local cd = getChannelData(dmKey)
+	cd.scroll.Visible = true
+	if chatHeaderNameLabel then chatHeaderNameLabel.Text = friendName end
+	inputBox.PlaceholderText = "Message @"..friendName
+	showChatScreen()
+end
+
+local function switchToGlobal()
+	currentChannel = "global"
+	for _, cd in pairs(channelData) do cd.scroll.Visible = false end
+	msgScroll.Visible = true
+	if chatHeaderNameLabel then chatHeaderNameLabel.Text = "Roblox" end
+	inputBox.PlaceholderText = "Message @Roblox"
+	showChatScreen()
+end
+
+-- Home button goes back to global
+local homeClickBtn = make("TextButton", {
+	Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+	Text="", AutoButtonColor=false, ZIndex=5,
+}, homeBox)
+homeClickBtn.MouseButton1Click:Connect(switchToGlobal)
+
+-- =============================================
+-- PRIVATE DM SEND (route based on currentChannel)
+-- =============================================
+local _origSend = firebaseSend
+firebaseSend = function(text, replyData)
+	if currentChannel ~= "global" then
+		local ts  = os.time()
+		local key = tostring(ts).."_"..tostring(math.random(10000,99999))
+		local url = FB_DMS.."/"..currentChannel.."/messages/"..key..".json"
+		local payload = {sender=USERNAME, text=text, ts=ts}
+		if replyData then payload.replyData = replyData end
+		local ok, res = pcall(httpRequest, {
+			Url=url, Method="PUT",
+			Headers={["Content-Type"]="application/json"},
+			Body=HttpService:JSONEncode(payload),
+		})
+		local sent = ok and res and (res.StatusCode==200 or res.StatusCode==201 or res.StatusCode==204)
+		return sent, key
+	end
+	return _origSend(text, replyData)
+end
+
+-- =============================================
+-- RENDER PRIVATE DM MESSAGE
+-- =============================================
+local function renderPrivateMsg(cd, senderName, text, msgTs)
+	cd.msgOrder += 1
+	local isMe = senderName == USERNAME
+	local avColor = isMe and C.accent or Color3.fromRGB(100,100,220)
+
+	local row = make("TextButton", {
+		Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+		BackgroundTransparency=1,
+		LayoutOrder=cd.msgOrder, Text="", AutoButtonColor=false, ZIndex=3,
+	}, cd.scroll)
+
+	local inner = make("Frame", {
+		Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+		BackgroundTransparency=1, ZIndex=4,
+	}, row)
+	make("UIListLayout", {
+		FillDirection=Enum.FillDirection.Horizontal,
+		VerticalAlignment=Enum.VerticalAlignment.Top,
+		Padding=UDim.new(0,12),
+	}, inner)
+	pad(8,4,0,0,inner)
+
+	local avH = make("Frame", {
+		Size=UDim2.new(0,40,0,40), BackgroundTransparency=1,
+		LayoutOrder=1, ZIndex=5,
+	}, inner)
+	local avF, avImg, avLbl = makeAv(40, string.upper(string.sub(senderName,1,1)), avColor, avH)
+	avF.Size = UDim2.new(1,0,1,0)
+	applyHeadshot(avImg, avLbl, isMe and MY_HEADSHOT or ROBLOX_HEADSHOT)
+
+	local tb = make("Frame", {
+		Size=UDim2.new(1,-64,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+		BackgroundTransparency=1, LayoutOrder=2, ZIndex=5,
+	}, inner)
+	make("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,2)}, tb)
+
+	local nr = make("Frame", {
+		Size=UDim2.new(1,0,0,18), BackgroundTransparency=1,
+		LayoutOrder=1, ZIndex=6,
+	}, tb)
+	make("UIListLayout", {
+		FillDirection=Enum.FillDirection.Horizontal,
+		VerticalAlignment=Enum.VerticalAlignment.Center,
+	}, nr)
+	make("TextLabel", {
+		Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+		BackgroundTransparency=1,
+		Text=isMe and DISPLAY_NAME or senderName,
+		Font=FB, TextSize=14, TextColor3=C.txt_white,
+		TextXAlignment=Enum.TextXAlignment.Left,
+		LayoutOrder=1, ZIndex=7,
+	}, nr)
+	make("TextLabel", {
+		Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+		BackgroundTransparency=1,
+		Text="  "..os.date("%I:%M %p", msgTs),
+		Font=FR, TextSize=11, TextColor3=C.txt_muted,
+		TextXAlignment=Enum.TextXAlignment.Left,
+		LayoutOrder=2, ZIndex=7,
+	}, nr)
+
+	local tokens = parseEmoji(text)
+	local jumbo  = isEmojiOnly(tokens)
+	local wrap   = make("Frame", {
+		Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+		BackgroundTransparency=1, LayoutOrder=2, ZIndex=6,
+	}, tb)
+	buildEmojiContent(wrap, tokens, jumbo, 7, C.txt_white)
+end
+
+-- =============================================
+-- POLL PRIVATE DM
+-- =============================================
+local function pollPrivateDM(dmKey, friendName)
+	local cd = getChannelData(dmKey)
+	local ok, res = pcall(httpRequest, {
+		Url = FB_DMS.."/"..dmKey.."/messages.json", Method="GET",
+	})
+	if not ok or not res or res.StatusCode ~= 200 or res.Body == "null" then return end
+	local ok2, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+	if not ok2 or type(data) ~= "table" then return end
+
+	local msgs = {}
+	for key, val in pairs(data) do
+		if type(val)=="table" and val.sender and val.text and val.ts then
+			table.insert(msgs, {key=key, sender=val.sender, text=val.text, ts=val.ts})
+		end
+	end
+	table.sort(msgs, function(a,b) return a.ts < b.ts end)
+
+	for _, msg in ipairs(msgs) do
+		if not cd.seenKeys[msg.key] then
+			cd.seenKeys[msg.key] = true
+			renderPrivateMsg(cd, msg.sender, msg.text, msg.ts)
+
+			-- Update sidebar preview
+			if activeDMSlots[dmKey] then
+				local pre = (msg.sender==USERNAME and "You: " or msg.sender..": ")..msg.text:sub(1,30)
+				activeDMSlots[dmKey].lastMsgLabel.Text = pre
+			end
+
+			-- Notification if GUI closed and from other person
+			if not msg.sender==USERNAME and not gui.Enabled then
+				pcall(function()
+					local uid = Players:GetUserIdFromNameAsync(msg.sender)
+					game:GetService("StarterGui"):SetCore("SendNotification", {
+						Title    = msg.sender,
+						Text     = msg.text:sub(1,50),
+						Icon     = "rbxthumb://type=AvatarHeadShot&id="..tostring(uid).."&w=60&h=60",
+						Duration = 5,
+					})
+				end)
+				if sendSound and SEND_SOUND_ASSET then sendSound:Play() end
+			end
+		end
+	end
+end
+
+-- =============================================
+-- FRIEND REQUEST FUNCTIONS
+-- =============================================
+local function sendFriendRequest(toUser)
+	local ok, res = pcall(httpRequest, {
+		Url=FB_USERS.."/"..toUser..".json", Method="GET",
+	})
+	if not ok or not res or res.StatusCode~=200 or res.Body=="null" then
+		return false, "User hasn't used DiscordBlox"
+	end
+	local dmKey = getDMKey(USERNAME, toUser)
+	local ok2, res2 = pcall(httpRequest, {Url=FB_FRIENDS.."/"..dmKey..".json", Method="GET"})
+	if ok2 and res2 and res2.Body~="null" then return false, "Already friends" end
+
+	local ok3, res3 = pcall(httpRequest, {
+		Url=FB_REQUESTS.."/"..toUser.."/"..USERNAME..".json", Method="PUT",
+		Headers={["Content-Type"]="application/json"},
+		Body=HttpService:JSONEncode({from=USERNAME, ts=os.time()}),
+	})
+	return (ok3 and res3 and (res3.StatusCode==200 or res3.StatusCode==201)), "Friend request sent!"
+end
+
+local function acceptFriendRequest(fromUser)
+	local dmKey = getDMKey(USERNAME, fromUser)
+	pcall(httpRequest, {
+		Url=FB_FRIENDS.."/"..dmKey..".json", Method="PUT",
+		Headers={["Content-Type"]="application/json"},
+		Body=HttpService:JSONEncode({users={USERNAME,fromUser}, since=os.time()}),
+	})
+	pcall(httpRequest, {Url=FB_REQUESTS.."/"..USERNAME.."/"..fromUser..".json", Method="DELETE"})
+end
+
+local function declineFriendRequest(fromUser)
+	pcall(httpRequest, {Url=FB_REQUESTS.."/"..USERNAME.."/"..fromUser..".json", Method="DELETE"})
+end
+
+-- =============================================
+-- ADD FRIEND ENTRY TO SIDEBAR + ALL TAB
+-- =============================================
+local function addFriendEntry(friendName)
+	local dmKey = getDMKey(USERNAME, friendName)
+	if activeDMSlots[dmKey] then return end
+
+	-- Sidebar entry
+	local sEntry = make("TextButton", {
+		Size=UDim2.new(1,0,0,44),
+		BackgroundTransparency=1, BackgroundColor3=C.bg_hover,
+		BorderSizePixel=0, ZIndex=4,
+		Text="", AutoButtonColor=false,
+	}, dmArea)
+	corner(4, sEntry)
+
+	local sAvH = make("Frame", {
+		Size=UDim2.new(0,34,0,34), Position=UDim2.new(0,8,0.5,-17),
+		BackgroundTransparency=1, ZIndex=5,
+	}, sEntry)
+	local sAvF, sAvImg, sAvLbl = makeAv(34, string.upper(string.sub(friendName,1,1)), C.accent, sAvH)
+	sAvF.Size = UDim2.new(1,0,1,0); sAvImg.ZIndex=6; sAvLbl.ZIndex=6
+
+	-- Load friend headshot from users node
+	task.spawn(function()
+		local ok, res = pcall(httpRequest, {Url=FB_USERS.."/"..friendName..".json", Method="GET"})
+		if ok and res and res.StatusCode==200 and res.Body~="null" then
+			local ok2, d = pcall(HttpService.JSONDecode, HttpService, res.Body)
+			if ok2 and d and d.headshot then applyHeadshot(sAvImg, sAvLbl, d.headshot) end
+		end
+	end)
+
+	local sDot = make("Frame", {
+		Size=UDim2.new(0,10,0,10), Position=UDim2.new(1,-8,1,-8),
+		BackgroundColor3=C.online, BorderSizePixel=0, ZIndex=7,
+	}, sAvH)
+	corner(10,sDot); make("UIStroke",{Color=C.bg_dark,Thickness=2.5},sDot)
+
+	make("TextLabel", {
+		Size=UDim2.new(1,-52,0,16), Position=UDim2.new(0,50,0,7),
+		BackgroundTransparency=1, Text=friendName,
+		Font=FM, TextSize=14, TextColor3=C.txt_white,
+		TextXAlignment=Enum.TextXAlignment.Left,
+		TextTruncate=Enum.TextTruncate.AtEnd, ZIndex=5,
+	}, sEntry)
+
+	local sLast = make("TextLabel", {
+		Size=UDim2.new(1,-52,0,12), Position=UDim2.new(0,50,0,24),
+		BackgroundTransparency=1, Text="",
+		Font=FR, TextSize=10, TextColor3=C.txt_muted,
+		TextXAlignment=Enum.TextXAlignment.Left,
+		TextTruncate=Enum.TextTruncate.AtEnd, ZIndex=5,
+	}, sEntry)
+
+	sEntry.MouseButton1Click:Connect(function() switchToChannel(dmKey, friendName) end)
+	sEntry.MouseEnter:Connect(function()
+		if currentChannel~=dmKey then
+			TweenService:Create(sEntry,TweenInfo.new(0.1),{BackgroundTransparency=0.5}):Play()
+		end
+	end)
+	sEntry.MouseLeave:Connect(function()
+		if currentChannel~=dmKey then
+			TweenService:Create(sEntry,TweenInfo.new(0.1),{BackgroundTransparency=1}):Play()
+		end
+	end)
+
+	activeDMSlots[dmKey] = {entry=sEntry, lastMsgLabel=sLast, friendName=friendName}
+
+	-- ALL tab entry
+	local allEntry = make("Frame", {
+		Size=UDim2.new(1,0,0,52),
+		BackgroundColor3=C.bg_hover, BackgroundTransparency=0.8,
+		BorderSizePixel=0, ZIndex=5,
+	}, allScroll)
+	corner(4,allEntry)
+	make("TextLabel", {
+		Size=UDim2.new(1,-88,0,20), Position=UDim2.new(0,16,0,10),
+		BackgroundTransparency=1, Text=friendName,
+		Font=FM, TextSize=14, TextColor3=C.txt_white,
+		TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6,
+	}, allEntry)
+	make("TextLabel", {
+		Size=UDim2.new(1,-88,0,14), Position=UDim2.new(0,16,0,30),
+		BackgroundTransparency=1, Text="Online",
+		Font=FR, TextSize=11, TextColor3=C.online,
+		TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6,
+	}, allEntry)
+	local msgBtn = make("TextButton", {
+		Size=UDim2.new(0,72,0,28), Position=UDim2.new(1,-80,0.5,-14),
+		BackgroundColor3=C.accent, BorderSizePixel=0,
+		Text="Message", Font=FM, TextSize=11,
+		TextColor3=C.txt_white, AutoButtonColor=false, ZIndex=6,
+	}, allEntry)
+	corner(6,msgBtn)
+	msgBtn.MouseButton1Click:Connect(function() switchToChannel(dmKey, friendName) end)
+end
+
+-- =============================================
+-- PENDING REQUEST ENTRY
+-- =============================================
+local pendingBadgeCount = 0
+
+local function addPendingEntry(fromUser)
+	if knownPending[fromUser] then return end
+	knownPending[fromUser] = true
+	pendingBadgeCount += 1
+	friendBadge.Visible = true
+	friendBadgeLabel.Text = tostring(pendingBadgeCount)
+
+	local pEntry = make("Frame", {
+		Size=UDim2.new(1,0,0,52),
+		BackgroundColor3=C.bg_hover, BackgroundTransparency=0.8,
+		BorderSizePixel=0, ZIndex=5,
+	}, pendScroll)
+	corner(4,pEntry)
+	make("TextLabel", {
+		Size=UDim2.new(1,-148,0,18), Position=UDim2.new(0,16,0,8),
+		BackgroundTransparency=1, Text=fromUser,
+		Font=FM, TextSize=14, TextColor3=C.txt_white,
+		TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6,
+	}, pEntry)
+	make("TextLabel", {
+		Size=UDim2.new(1,-148,0,14), Position=UDim2.new(0,16,0,28),
+		BackgroundTransparency=1, Text="Incoming friend request",
+		Font=FR, TextSize=11, TextColor3=C.txt_muted,
+		TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6,
+	}, pEntry)
+
+	local accBtn = make("TextButton", {
+		Size=UDim2.new(0,60,0,28), Position=UDim2.new(1,-136,0.5,-14),
+		BackgroundColor3=Color3.fromRGB(35,165,89), BorderSizePixel=0,
+		Text="Accept", Font=FM, TextSize=11,
+		TextColor3=C.txt_white, AutoButtonColor=false, ZIndex=6,
+	}, pEntry)
+	corner(6,accBtn)
+	local decBtn = make("TextButton", {
+		Size=UDim2.new(0,60,0,28), Position=UDim2.new(1,-68,0.5,-14),
+		BackgroundColor3=Color3.fromRGB(237,66,69), BorderSizePixel=0,
+		Text="Decline", Font=FM, TextSize=11,
+		TextColor3=C.txt_white, AutoButtonColor=false, ZIndex=6,
+	}, pEntry)
+	corner(6,decBtn)
+
+	accBtn.MouseButton1Click:Connect(function()
+		task.spawn(function()
+			acceptFriendRequest(fromUser)
+			pEntry:Destroy()
+			knownPending[fromUser] = nil
+			pendingBadgeCount = math.max(0, pendingBadgeCount-1)
+			friendBadge.Visible = pendingBadgeCount > 0
+			friendBadgeLabel.Text = tostring(pendingBadgeCount)
+			addFriendEntry(fromUser)
+		end)
+	end)
+	decBtn.MouseButton1Click:Connect(function()
+		task.spawn(function()
+			declineFriendRequest(fromUser)
+			pEntry:Destroy()
+			knownPending[fromUser] = nil
+			pendingBadgeCount = math.max(0, pendingBadgeCount-1)
+			friendBadge.Visible = pendingBadgeCount > 0
+			friendBadgeLabel.Text = tostring(pendingBadgeCount)
+		end)
+	end)
+end
+
+-- Add friend button handler
+addBtn2.MouseButton1Click:Connect(function()
+	local target = addInput.Text:match("^%s*(.-)%s*$")
+	if target=="" or target==USERNAME then
+		addStatus.Text = target=="" and "Enter a username." or "You can't add yourself."
+		addStatus.TextColor3 = Color3.fromRGB(237,66,69); return
+	end
+	addStatus.Text="Sending..."; addStatus.TextColor3=C.txt_muted
+	task.spawn(function()
+		local ok, msg = sendFriendRequest(target)
+		addStatus.Text = msg
+		addStatus.TextColor3 = ok and Color3.fromRGB(35,165,89) or Color3.fromRGB(237,66,69)
+		if ok then addInput.Text="" end
+	end)
+end)
+
+-- =============================================
+-- POLL FRIENDS + REQUESTS
+-- =============================================
+local function pollFriendsSystem()
+	-- Incoming requests
+	local ok, res = pcall(httpRequest, {Url=FB_REQUESTS.."/"..USERNAME..".json", Method="GET"})
+	if ok and res and res.StatusCode==200 and res.Body~="null" then
+		local ok2, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
+		if ok2 and type(data)=="table" then
+			for fromUser, _ in pairs(data) do addPendingEntry(fromUser) end
+		end
+	end
+
+	-- Accepted friends
+	local ok2, res2 = pcall(httpRequest, {Url=FB_FRIENDS..".json", Method="GET"})
+	if ok2 and res2 and res2.StatusCode==200 and res2.Body~="null" then
+		local ok3, data = pcall(HttpService.JSONDecode, HttpService, res2.Body)
+		if ok3 and type(data)=="table" then
+			for dmKey, _ in pairs(data) do
+				if dmKey:find(USERNAME, 1, true) then
+					local parts={}; for p in dmKey:gmatch("[^_]+") do table.insert(parts,p) end
+					local friendName = parts[1]==USERNAME and parts[2] or parts[1]
+					if friendName and not knownFriends[dmKey] then
+						knownFriends[dmKey] = true
+						addFriendEntry(friendName)
+					end
+					pollPrivateDM(dmKey, friendName)
+				end
+			end
+		end
+	end
+end
+
+-- =============================================
+-- LAUNCH UNREAD NOTIFICATIONS
+-- =============================================
+task.spawn(function()
+	local lastSeenTs = 0
+	local ok, res = pcall(httpRequest, {Url=FB_LASTSEEN.."/"..USERNAME..".json", Method="GET"})
+	if ok and res and res.StatusCode==200 and res.Body~="null" then
+		local ok2, v = pcall(HttpService.JSONDecode, HttpService, res.Body)
+		if ok2 and type(v)=="number" then lastSeenTs=v end
+	end
+
+	-- Check global channel (owner only)
+	if USERNAME == GLOBAL_OWNER then
+		local ok2, res2 = pcall(httpRequest, {Url=FIREBASE_URL..".json", Method="GET"})
+		if ok2 and res2 and res2.StatusCode==200 and res2.Body~="null" then
+			local ok3, data = pcall(HttpService.JSONDecode, HttpService, res2.Body)
+			if ok3 and type(data)=="table" then
+				local unread = {}
+				for _, val in pairs(data) do
+					if type(val)=="table" and val.ts and val.ts>lastSeenTs and val.sender~=USERNAME then
+						unread[val.sender] = (unread[val.sender] or 0)+1
+					end
+				end
+				for sender, count in pairs(unread) do
+					local uid = 1
+					pcall(function() uid = Players:GetUserIdFromNameAsync(sender) end)
+					pcall(function()
+						game:GetService("StarterGui"):SetCore("SendNotification",{
+							Title    = sender,
+							Text     = tostring(count).." new message"..(count>1 and "s" or ""),
+							Icon     = "rbxthumb://type=AvatarHeadShot&id="..tostring(uid).."&w=60&h=60",
+							Duration = 6,
+						})
+					end)
+					if sendSound and SEND_SOUND_ASSET then sendSound:Play() end
+					task.wait(1)
+				end
+			end
+		end
+	end
+
+	-- Update last seen
+	pcall(httpRequest, {
+		Url=FB_LASTSEEN.."/"..USERNAME..".json", Method="PUT",
+		Headers={["Content-Type"]="application/json"},
+		Body=tostring(os.time()),
+	})
+end)
+
+-- Update last seen when GUI opened
+gui:GetPropertyChangedSignal("Enabled"):Connect(function()
+	if gui.Enabled then
+		pcall(httpRequest, {
+			Url=FB_LASTSEEN.."/"..USERNAME..".json", Method="PUT",
+			Headers={["Content-Type"]="application/json"},
+			Body=tostring(os.time()),
+		})
+	end
+end)
+
+-- Global channel: only show messages to/from GLOBAL_OWNER
+local _origFirebasePoll = firebasePoll
+firebasePoll = function()
+	if USERNAME ~= GLOBAL_OWNER then
+		-- Non-owners see empty global channel, still get friend DMs
+		pollFriendsSystem()
+		return
+	end
+	_origFirebasePoll()
+	pollFriendsSystem()
+end
+
+-- =============================================
+-- POLL LOOP
 local loadSuccess = true  -- will be set false if any critical error occurred
 
 task.spawn(function()
