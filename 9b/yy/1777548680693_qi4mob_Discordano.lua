@@ -16,6 +16,7 @@ local HttpService      = game:GetService("HttpService")
 local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local USERNAME  = player.Name
+local GLOBAL_OWNER = "noboestnobo"  -- only this user sees the global Roblox DM channel
 
 -- =============================================
 -- TOPBAR BUTTON (hooks into Roblox CoreGui sausage bar)
@@ -394,16 +395,29 @@ local gui = make("ScreenGui", {
 
 guiRef.gui = gui
 
--- OUTER WRAPPER: clips to rounded shape
--- winClip handles the corner+clip, win is square inside it
+-- Window sizing: adapt to screen size
+-- On small screens (phones) use more of the screen, cap on large screens
+local vp = workspace.CurrentCamera.ViewportSize
+local isSmallScreen = vp.X < 600 or vp.Y < 500
+
+local winW = isSmallScreen and 0.97 or 0.80
+local winH = isSmallScreen and 0.88 or 0.76
+local winX = (1 - winW) / 2
+local winY = (1 - winH) / 2
+
 local winClip = make("Frame", {
-	Size             = UDim2.new(0.80, 0, 0.76, 0),
-	Position         = UDim2.new(0.10, 0, 0.12, 0),
+	Size             = UDim2.new(winW, 0, winH, 0),
+	Position         = UDim2.new(winX, 0, winY, 0),
 	BackgroundColor3 = C.bg_chat,
 	BorderSizePixel  = 0,
 	ClipsDescendants = true,
 }, gui)
 corner(12, winClip)
+
+-- On small screens, make colA and colB narrower
+local colAWidth = isSmallScreen and 52 or 72
+local colBWidth = isSmallScreen and 180 or 240
+local colTotalFixed = colAWidth + colBWidth
 
 local win = make("Frame", {
 	Size             = UDim2.new(1, 0, 1, 0),
@@ -423,7 +437,7 @@ local win = make("Frame", {
 
 -- COL A: Server icons
 local colA = make("Frame", {
-	Size             = UDim2.new(0, 72, 1, 0),
+	Size             = UDim2.new(0, colAWidth, 1, 0),
 	Position         = UDim2.new(0, 0, 0, 0),
 	BackgroundColor3 = C.bg_darkest,
 	BorderSizePixel  = 0,
@@ -499,8 +513,8 @@ make("Frame", {
 
 -- COL B: Sidebar
 local colB = make("Frame", {
-	Size = UDim2.new(0,240,1,0),
-	Position = UDim2.new(0,72,0,0),
+	Size = UDim2.new(0,colBWidth,1,0),
+	Position = UDim2.new(0,colAWidth,0,0),
 	BackgroundColor3 = C.bg_dark,
 	BorderSizePixel = 0, ZIndex = 2,
 }, win)
@@ -523,21 +537,32 @@ make("Frame", {
 	BackgroundColor3 = C.divider, BorderSizePixel = 0, ZIndex = 4,
 }, sbHead)
 
--- DM list area (leave 52px at bottom for profile bar)
-local dmArea = make("Frame", {
+-- DM list area — ScrollingFrame so entries never overflow
+local dmArea = make("ScrollingFrame", {
 	Size = UDim2.new(1,0,1,-172),
 	Position = UDim2.new(0,0,0,48),
 	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 3,
+	ScrollBarImageColor3 = C.scrollbar,
+	CanvasSize = UDim2.new(0,0,0,0),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
 	ClipsDescendants = true,
 	ZIndex = 3,
 }, colB)
 pad(4,4,8,8, dmArea)
+make("UIListLayout", {
+	SortOrder = Enum.SortOrder.LayoutOrder,
+	Padding = UDim.new(0,2),
+}, dmArea)
 
--- ROBLOX DM ENTRY
+-- ROBLOX DM ENTRY (only visible to owner)
 local dmEntry = make("Frame", {
 	Size = UDim2.new(1,0,0,44),
 	BackgroundColor3 = C.bg_hover,
 	BorderSizePixel = 0, ZIndex = 4,
+	Visible = (USERNAME == GLOBAL_OWNER),
+	LayoutOrder = 1,
 }, dmArea)
 corner(4, dmEntry)
 
@@ -796,8 +821,8 @@ make("TextLabel", {
 
 -- COL C: Chat area
 local colC = make("Frame", {
-	Size = UDim2.new(1,-312,1,0),
-	Position = UDim2.new(0,312,0,0),
+	Size = UDim2.new(1,-colTotalFixed,1,0),
+	Position = UDim2.new(0,colTotalFixed,0,0),
 	BackgroundColor3 = C.bg_chat,
 	BorderSizePixel = 0, ZIndex = 2,
 }, win)
@@ -2133,8 +2158,6 @@ local FB_REQUESTS = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/fr
 local FB_FRIENDS  = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/friends"
 local FB_DMS      = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/dms"
 local FB_LASTSEEN = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/lastseen"
-local GLOBAL_OWNER = "noboestnobo"
-
 local function getDMKey(a, b)
 	if a < b then return a.."_"..b else return b.."_"..a end
 end
@@ -2169,8 +2192,8 @@ end)
 -- FRIENDS SCREEN UI
 -- =============================================
 local friendsScreen = make("Frame", {
-	Size = UDim2.new(1,-312,1,0),
-	Position = UDim2.new(0,312,0,0),
+	Size = UDim2.new(1,-colTotalFixed,1,0),
+	Position = UDim2.new(0,colTotalFixed,0,0),
 	BackgroundColor3 = C.bg_chat,
 	BorderSizePixel = 0, ZIndex = 2,
 	Visible = false,
@@ -2225,10 +2248,11 @@ local function switchTab(name)
 end
 
 for _, name in ipairs(tabNames) do
+	local tabW = isSmallScreen and 70 or 88
 	local btn = make("TextButton", {
-		Size=UDim2.new(0,88,1,0),
+		Size=UDim2.new(0,tabW,1,0),
 		BackgroundTransparency=1,
-		Text=name, Font=FM, TextSize=13,
+		Text=name, Font=FM, TextSize=isSmallScreen and 11 or 13,
 		TextColor3=C.txt_muted,
 		AutoButtonColor=false, ZIndex=5,
 	}, tabRow)
@@ -2597,6 +2621,7 @@ local function addFriendEntry(friendName)
 		BackgroundTransparency=1, BackgroundColor3=C.bg_hover,
 		BorderSizePixel=0, ZIndex=4,
 		Text="", AutoButtonColor=false,
+		LayoutOrder = 100 + #activeDMSlots,  -- after Roblox entry (LayoutOrder=1)
 	}, dmArea)
 	corner(4, sEntry)
 
