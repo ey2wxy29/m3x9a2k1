@@ -20,74 +20,71 @@ local GLOBAL_OWNER = "noboestnobo"  -- only this user sees the global Roblox DM 
 
 -- =============================================
 -- TOPBAR BUTTON (hooks into Roblox CoreGui sausage bar)
--- Multiple scripts coexist: each one expands the bar by SLOT_SIZE
--- and positions its button at the new right edge.
+-- Wrapped in pcall so script still runs if topbar structure differs
 -- =============================================
-local CoreGui    = game:GetService("CoreGui")
-local SLOT_SIZE  = 36
-local ICON_URL   = "https://raw.githubusercontent.com/ey2wxy29/m3x9a2k1/main/yt/66/1777101057537_f1uc8n_5968756.png"
+local CoreGui   = game:GetService("CoreGui")
+local SLOT_SIZE = 36
 
-local topBarApp     = CoreGui:WaitForChild("TopBarApp"):WaitForChild("TopBarApp")
-local sausageHolder = topBarApp:WaitForChild("UnibarLeftFrame"):WaitForChild("UnibarMenu"):WaitForChild("2")
+local buttonFrame   = nil
+local TopbarButton  = nil
+local guiRef        = {}
 
--- Each new script expands from whatever the CURRENT width is, not original
-local currentWidth  = sausageHolder.Size.X.Offset
-local expandedSize  = UDim2.new(0, currentWidth + SLOT_SIZE, 0, sausageHolder.Size.Y.Offset)
+local topbarOk, topbarErr = pcall(function()
+	local topBarApp     = CoreGui:WaitForChild("TopBarApp", 5)
+	if not topBarApp then error("no TopBarApp") end
+	topBarApp = topBarApp:WaitForChild("TopBarApp", 5)
+	local sausageHolder = topBarApp
+		:WaitForChild("UnibarLeftFrame", 5)
+		:WaitForChild("UnibarMenu", 5)
+		:WaitForChild("2", 5)
 
--- Button container frame at the right edge
-local buttonFrame = Instance.new("Frame")
-buttonFrame.Name             = "DiscordBloxButtonFrame"
-buttonFrame.Size             = UDim2.new(0, SLOT_SIZE, 1, 0)
-buttonFrame.Position         = UDim2.new(0, currentWidth, 0, 0)
-buttonFrame.BackgroundTransparency = 1
-buttonFrame.Visible          = false  -- hidden until confirmed loaded
-buttonFrame.Parent           = sausageHolder
+	local currentWidth = sausageHolder.Size.X.Offset
+	local expandedSize = UDim2.new(0, currentWidth+SLOT_SIZE, 0, sausageHolder.Size.Y.Offset)
 
--- Download topbar icon via file system (handled in async download block below)
-local TOPBAR_ICON_ASSET = nil
+	buttonFrame = Instance.new("Frame")
+	buttonFrame.Name              = "DiscordBloxButtonFrame"
+	buttonFrame.Size              = UDim2.new(0,SLOT_SIZE,1,0)
+	buttonFrame.Position          = UDim2.new(0,currentWidth,0,0)
+	buttonFrame.BackgroundTransparency = 1
+	buttonFrame.Visible           = false
+	buttonFrame.Parent            = sausageHolder
 
-local TopbarButton = Instance.new("ImageButton")
-TopbarButton.Name              = "DiscordBloxButton"
-TopbarButton.Size              = UDim2.new(0, 32, 0, 32)
-TopbarButton.AnchorPoint       = Vector2.new(0.5, 0.5)
-TopbarButton.Position          = UDim2.new(0.5, -6, 0.5, 0)
-TopbarButton.BackgroundTransparency = 1
-TopbarButton.Image             = ""  -- filled by download above
-TopbarButton.ScaleType         = Enum.ScaleType.Fit
-TopbarButton.Parent            = buttonFrame
+	TopbarButton = Instance.new("ImageButton")
+	TopbarButton.Name              = "DiscordBloxButton"
+	TopbarButton.Size              = UDim2.new(0,32,0,32)
+	TopbarButton.AnchorPoint       = Vector2.new(0.5,0.5)
+	TopbarButton.Position          = UDim2.new(0.5,-6,0.5,0)
+	TopbarButton.BackgroundTransparency = 1
+	TopbarButton.Image             = ""
+	TopbarButton.ScaleType         = Enum.ScaleType.Fit
+	TopbarButton.Parent            = buttonFrame
 
--- Hover effect
-local function ApplyHoverEffect(button, normalSize, hoverSize)
 	local info = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-	button.MouseEnter:Connect(function()
-		TweenService:Create(button, info, {Size = hoverSize}):Play()
+	TopbarButton.MouseEnter:Connect(function()
+		TweenService:Create(TopbarButton,info,{Size=UDim2.new(0,36,0,36)}):Play()
 	end)
-	button.MouseLeave:Connect(function()
-		TweenService:Create(button, info, {Size = normalSize}):Play()
+	TopbarButton.MouseLeave:Connect(function()
+		TweenService:Create(TopbarButton,info,{Size=UDim2.new(0,32,0,32)}):Play()
 	end)
+
+	local sizeConn
+	sizeConn = sausageHolder:GetPropertyChangedSignal("Size"):Connect(function()
+		if sausageHolder.Parent then
+			sausageHolder.Size = expandedSize
+			buttonFrame.Position = UDim2.new(0,sausageHolder.Size.X.Offset-SLOT_SIZE,0,0)
+		else sizeConn:Disconnect() end
+	end)
+	sausageHolder.Size = expandedSize
+
+	TopbarButton.MouseButton1Click:Connect(function()
+		local g = guiRef.gui
+		if g and g.Parent then g.Enabled = not g.Enabled end
+	end)
+end)
+
+if not topbarOk then
+	warn("[DiscordBlox] Topbar failed: " .. tostring(topbarErr))
 end
-ApplyHoverEffect(TopbarButton, UDim2.new(0,32,0,32), UDim2.new(0,36,0,36))
-
--- Persist expanded size so Roblox doesn't shrink it back
-local sizeConn
-sizeConn = sausageHolder:GetPropertyChangedSignal("Size"):Connect(function()
-	if sausageHolder.Parent then
-		sausageHolder.Size = expandedSize
-		buttonFrame.Position = UDim2.new(0, sausageHolder.Size.X.Offset - SLOT_SIZE, 0, 0)
-	else
-		sizeConn:Disconnect()
-	end
-end)
-sausageHolder.Size = expandedSize
-
--- Toggle GUI on click (gui defined later, use a reference table)
-local guiRef = {}
-TopbarButton.MouseButton1Click:Connect(function()
-	local g = guiRef.gui
-	if g and g.Parent then
-		g.Enabled = not g.Enabled
-	end
-end)
 
 -- =============================================
 -- HTTP (multi-executor) - defined first, needed by downloads
