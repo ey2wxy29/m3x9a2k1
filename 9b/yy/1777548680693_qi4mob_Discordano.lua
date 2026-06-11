@@ -1999,14 +1999,15 @@ local function sendMessage()
 			end)
 		end
 	else
-		-- Private DM: send and let poll render it (optimistic local render optional)
+		-- Private DM: optimistic local render + send
 		task.spawn(function()
 			local success, key = firebaseSend(text, replyPayload)
 			if success then
 				local cd = channelData[currentChannel]
 				if cd then
 					cd.seenKeys[key] = true
-					renderPrivateMsg(cd, USERNAME, text, os.time())
+					cd.currentMsgKey = key
+					renderPrivateMsg(cd, USERNAME, text, os.time(), false, replyPayload)
 				end
 				if sendSound and SEND_SOUND_ASSET then sendSound:Play() end
 			end
@@ -2263,7 +2264,15 @@ local function getChannelData(dmKey)
 				sc.CanvasPosition = Vector2.new(0, sc.AbsoluteCanvasSize.Y)
 			end)
 		end)
-		channelData[dmKey] = {scroll=sc, seenKeys={}, msgOrder=0}
+		channelData[dmKey] = {
+			scroll      = sc,
+			seenKeys    = {},
+			msgOrder    = 0,
+			lastSender  = nil,
+			lastTs      = 0,
+			lastDateStr = nil,
+			dmKey       = dmKey,
+		}
 	end
 	return channelData[dmKey]
 end
@@ -2333,11 +2342,61 @@ dmEntryBtn.MouseButton1Click:Connect(switchToGlobal)
 
 -- =============================================
 -- RENDER PRIVATE DM MESSAGE
+-- Full-featured: grouping, date separators, hover, hold menu, emoji
 -- =============================================
-function renderPrivateMsg(cd, senderName, text, msgTs)
+function renderPrivateMsg(cd, senderName, text, msgTs, isEdited, replyData)
+	msgTs = msgTs or os.time()
+
+	-- Per-channel date separator
+	local dateStr = os.date("%B %d, %Y", msgTs)
+	if dateStr ~= cd.lastDateStr then
+		cd.lastDateStr = dateStr
+		cd.lastSender  = nil
+		cd.lastTs      = 0
+		cd.msgOrder   += 1
+		local sep = make("Frame", {
+			Name = "DateSep",
+			Size = UDim2.new(1,0,0,24),
+			BackgroundTransparency = 1,
+			LayoutOrder = cd.msgOrder, ZIndex = 3,
+		}, cd.scroll)
+		make("Frame", {
+			Size=UDim2.new(0.5,-40,0,1), Position=UDim2.new(0,0,0.5,0),
+			BackgroundColor3=C.divider, BorderSizePixel=0, ZIndex=4,
+		}, sep)
+		make("TextLabel", {
+			Size=UDim2.new(0,80,1,0), Position=UDim2.new(0.5,-40,0,0),
+			BackgroundTransparency=1, Text=dateStr,
+			Font=FM, TextSize=11, TextColor3=C.txt_muted, ZIndex=4,
+		}, sep)
+		make("Frame", {
+			Size=UDim2.new(0.5,-40,0,1), Position=UDim2.new(0.5,40,0.5,0),
+			BackgroundColor3=C.divider, BorderSizePixel=0, ZIndex=4,
+		}, sep)
+	end
+
 	cd.msgOrder += 1
-	local isMe = senderName == USERNAME
-	local avColor = isMe and C.accent or Color3.fromRGB(100,100,220)
+
+	local isMe        = senderName == USERNAME
+	local avColor     = isMe and C.accent or Color3.fromRGB(100,100,220)
+	local avLetter    = string.upper(string.sub(senderName, 1, 1))
+	local displayName = isMe and DISPLAY_NAME or senderName
+	local timeStr     = os.date("%I:%M %p", msgTs)
+
+	-- Per-channel grouping state
+	cd.lastSender = cd.lastSender or nil
+	cd.lastTs     = cd.lastTs     or 0
+	local isGrouped = (senderName == cd.lastSender)
+		and ((msgTs - cd.lastTs) < GROUP_GAP)
+		and not replyData
+	cd.lastSender = senderName
+	cd.lastTs     = msgTs
+
+	-- Update sidebar preview
+	if activeDMSlots[cd.dmKey] then
+		local pre = (senderName==USERNAME and "You: " or senderName..": ")..text:sub(1,30)
+		activeDMSlots[cd.dmKey].lastMsgLabel.Text = pre
+	end
 
 	local row = make("TextButton", {
 		Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
@@ -2345,63 +2404,170 @@ function renderPrivateMsg(cd, senderName, text, msgTs)
 		LayoutOrder=cd.msgOrder, Text="", AutoButtonColor=false, ZIndex=3,
 	}, cd.scroll)
 
-	local inner = make("Frame", {
+	local hbg = make("Frame", {
+		Size=UDim2.new(1,20,1,0), Position=UDim2.new(0,-10,0,0),
+		BackgroundTransparency=1, BackgroundColor3=C.bg_hover,
+		BorderSizePixel=0, ZIndex=2,
+	}, row)
+	corner(4, hbg)
+	row.MouseEnter:Connect(function()
+		TweenService:Create(hbg,TweenInfo.new(0.1),{BackgroundTransparency=0.78}):Play()
+	end)
+	row.MouseLeave:Connect(function()
+		TweenService:Create(hbg,TweenInfo.new(0.1),{BackgroundTransparency=1}):Play()
+	end)
+
+	local content
+	local outerCol = make("Frame", {
 		Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
 		BackgroundTransparency=1, ZIndex=4,
 	}, row)
-	make("UIListLayout", {
-		FillDirection=Enum.FillDirection.Horizontal,
-		VerticalAlignment=Enum.VerticalAlignment.Top,
-		Padding=UDim.new(0,12),
-	}, inner)
-	pad(8,4,0,0,inner)
+	make("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,0)}, outerCol)
 
-	local avH = make("Frame", {
-		Size=UDim2.new(0,40,0,40), BackgroundTransparency=1,
-		LayoutOrder=1, ZIndex=5,
-	}, inner)
-	local avF, avImg, avLbl = makeAv(40, string.upper(string.sub(senderName,1,1)), avColor, avH)
-	avF.Size = UDim2.new(1,0,1,0)
-	applyHeadshot(avImg, avLbl, isMe and MY_HEADSHOT or ROBLOX_HEADSHOT)
+	-- Reply quote
+	if replyData then
+		local replyOuter = make("Frame", {
+			Size=UDim2.new(1,0,0,20), BackgroundTransparency=1,
+			LayoutOrder=1, ZIndex=5,
+		}, outerCol)
+		local vbar = make("Frame", {
+			Size=UDim2.new(0,2,1,0), Position=UDim2.new(0,40,0,0),
+			BackgroundColor3=C.txt_muted, BorderSizePixel=0, ZIndex=6,
+		}, replyOuter)
+		corner(4, vbar)
+		local replyInner = make("Frame", {
+			Size=UDim2.new(1,-52,1,0), Position=UDim2.new(0,48,0,0),
+			BackgroundTransparency=1, ZIndex=6,
+		}, replyOuter)
+		make("UIListLayout", {
+			FillDirection=Enum.FillDirection.Horizontal,
+			VerticalAlignment=Enum.VerticalAlignment.Center,
+			Padding=UDim.new(0,4),
+		}, replyInner)
+		local rAv = make("Frame", {
+			Size=UDim2.new(0,14,0,14), BackgroundTransparency=1,
+			BorderSizePixel=0, LayoutOrder=1, ZIndex=7,
+		}, replyInner)
+		local rAvImg = make("ImageLabel", {
+			Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+			Image=(replyData.sender==USERNAME) and MY_HEADSHOT or ROBLOX_HEADSHOT,
+			ZIndex=8,
+		}, rAv)
+		corner(14, rAvImg)
+		make("TextLabel", {
+			Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+			BackgroundTransparency=1, Text=replyData.sender,
+			Font=FM, TextSize=12, TextColor3=C.txt_white,
+			TextXAlignment=Enum.TextXAlignment.Left,
+			LayoutOrder=2, ZIndex=7,
+		}, replyInner)
+		make("TextLabel", {
+			Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+			Text=replyData.text:gsub(":([%w_]+):",":%1:"),
+			Font=FR, TextSize=12, TextColor3=C.txt_muted,
+			TextXAlignment=Enum.TextXAlignment.Left,
+			TextTruncate=Enum.TextTruncate.AtEnd,
+			LayoutOrder=3, ZIndex=7,
+		}, replyInner)
+	end
 
-	local tb = make("Frame", {
-		Size=UDim2.new(1,-64,0,0), AutomaticSize=Enum.AutomaticSize.Y,
-		BackgroundTransparency=1, LayoutOrder=2, ZIndex=5,
-	}, inner)
-	make("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,2)}, tb)
-
-	local nr = make("Frame", {
-		Size=UDim2.new(1,0,0,18), BackgroundTransparency=1,
-		LayoutOrder=1, ZIndex=6,
-	}, tb)
-	make("UIListLayout", {
-		FillDirection=Enum.FillDirection.Horizontal,
-		VerticalAlignment=Enum.VerticalAlignment.Center,
-	}, nr)
-	make("TextLabel", {
-		Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
-		BackgroundTransparency=1,
-		Text=isMe and DISPLAY_NAME or senderName,
-		Font=FB, TextSize=14, TextColor3=C.txt_white,
-		TextXAlignment=Enum.TextXAlignment.Left,
-		LayoutOrder=1, ZIndex=7,
-	}, nr)
-	make("TextLabel", {
-		Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
-		BackgroundTransparency=1,
-		Text="  "..os.date("%I:%M %p", msgTs),
-		Font=FR, TextSize=11, TextColor3=C.txt_muted,
-		TextXAlignment=Enum.TextXAlignment.Left,
-		LayoutOrder=2, ZIndex=7,
-	}, nr)
-
-	local tokens = parseEmoji(text)
-	local jumbo  = isEmojiOnly(tokens)
-	local wrap   = make("Frame", {
+	local msgRow = make("Frame", {
 		Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
-		BackgroundTransparency=1, LayoutOrder=2, ZIndex=6,
-	}, tb)
-	buildEmojiContent(wrap, tokens, jumbo, 7, C.txt_white)
+		BackgroundTransparency=1, LayoutOrder=2, ZIndex=5,
+	}, outerCol)
+
+	if isGrouped then
+		pad(2,4,52,0,msgRow)
+		local tokens = parseEmoji(text)
+		local jumbo  = isEmojiOnly(tokens)
+		local wrapper = make("Frame", {
+			Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+			BackgroundTransparency=1, ZIndex=6,
+		}, msgRow)
+		content = buildEmojiContent(wrapper, tokens, jumbo, 6, C.txt_white)
+	else
+		make("UIListLayout", {
+			FillDirection=Enum.FillDirection.Horizontal,
+			VerticalAlignment=Enum.VerticalAlignment.Top,
+			Padding=UDim.new(0,12),
+		}, msgRow)
+		pad(8,4,0,0,msgRow)
+
+		local avHolder = make("Frame", {
+			Size=UDim2.new(0,40,0,40), BackgroundTransparency=1,
+			LayoutOrder=1, ZIndex=5,
+		}, msgRow)
+		local avF, avImg, avLbl = makeAv(40, avLetter, avColor, avHolder)
+		avF.Size = UDim2.new(1,0,1,0)
+		avImg.ZIndex=6; avLbl.ZIndex=6
+		applyHeadshot(avImg, avLbl, isMe and MY_HEADSHOT or ROBLOX_HEADSHOT)
+
+		local tb = make("Frame", {
+			Size=UDim2.new(1,-64,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+			BackgroundTransparency=1, LayoutOrder=2, ZIndex=5,
+		}, msgRow)
+		make("UIListLayout", {SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,2)}, tb)
+
+		local nr = make("Frame", {
+			Size=UDim2.new(1,0,0,18), BackgroundTransparency=1,
+			LayoutOrder=1, ZIndex=6,
+		}, tb)
+		make("UIListLayout", {
+			FillDirection=Enum.FillDirection.Horizontal,
+			VerticalAlignment=Enum.VerticalAlignment.Center,
+		}, nr)
+		make("TextLabel", {
+			Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+			BackgroundTransparency=1,
+			Text=displayName, Font=FB, TextSize=14, TextColor3=C.txt_white,
+			TextXAlignment=Enum.TextXAlignment.Left,
+			LayoutOrder=1, ZIndex=7,
+		}, nr)
+		make("TextLabel", {
+			Size=UDim2.new(0,0,1,0), AutomaticSize=Enum.AutomaticSize.X,
+			BackgroundTransparency=1,
+			Text="  "..timeStr, Font=FR, TextSize=11, TextColor3=C.txt_muted,
+			TextXAlignment=Enum.TextXAlignment.Left,
+			LayoutOrder=2, ZIndex=7,
+		}, nr)
+
+		local tokens = parseEmoji(text)
+		local jumbo  = isEmojiOnly(tokens)
+		local wrapper = make("Frame", {
+			Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+			BackgroundTransparency=1, LayoutOrder=2, ZIndex=6,
+		}, tb)
+		content = buildEmojiContent(wrapper, tokens, jumbo, 7, C.txt_white)
+
+		if isEdited then
+			make("TextLabel", {
+				Name="EditedTag",
+				Size=UDim2.new(1,0,0,14), BackgroundTransparency=1,
+				Text="(edited)", Font=FR, TextSize=10,
+				TextColor3=C.txt_muted,
+				TextXAlignment=Enum.TextXAlignment.Left,
+				LayoutOrder=3, ZIndex=7,
+			}, tb)
+		end
+	end
+
+	-- Hold menu (same as global channel)
+	local msgKey    = cd.currentMsgKey  -- set by pollPrivateDM before calling
+	local msgSender = senderName
+	local msgText   = text
+	local msgTsSnap = msgTs
+	attachHoldDetection(row, function()
+		return {
+			key          = msgKey,
+			text         = msgText,
+			sender       = msgSender,
+			contentLabel = content,
+			rowFrame     = row,
+			ts           = msgTsSnap,
+		}
+	end)
+
+	return {content=content, sender=senderName, row=row, isGrouped=isGrouped, rawText=text, msgTs=msgTs}
 end
 
 -- =============================================
@@ -2427,14 +2593,10 @@ local function pollPrivateDM(dmKey, friendName)
 	for _, msg in ipairs(msgs) do
 		if not cd.seenKeys[msg.key] then
 			cd.seenKeys[msg.key] = true
-			renderPrivateMsg(cd, msg.sender, msg.text, msg.ts)
+			-- Pass the key into cd so renderPrivateMsg can capture it for hold menu
+			cd.currentMsgKey = msg.key
+			renderPrivateMsg(cd, msg.sender, msg.text, msg.ts, msg.edited == true, msg.replyData)
 
-			if activeDMSlots[dmKey] then
-				local pre = (msg.sender==USERNAME and "You: " or msg.sender..": ")..msg.text:sub(1,30)
-				activeDMSlots[dmKey].lastMsgLabel.Text = pre
-			end
-
-			-- FIX: corrected notification condition
 			if msg.sender ~= USERNAME and not gui.Enabled then
 				pcall(function()
 					local uid = Players:GetUserIdFromNameAsync(msg.sender)
@@ -2475,10 +2637,11 @@ end
 
 local function acceptFriendRequest(fromUser)
 	local dmKey = getDMKey(USERNAME, fromUser)
+	-- FIX: store both full usernames explicitly so we never have to parse the key
 	pcall(httpRequest, {
 		Url=FB_FRIENDS.."/"..dmKey..".json", Method="PUT",
 		Headers={["Content-Type"]="application/json"},
-		Body=HttpService:JSONEncode({users={USERNAME,fromUser}, since=os.time()}),
+		Body=HttpService:JSONEncode({user1=USERNAME, user2=fromUser, since=os.time()}),
 	})
 	pcall(httpRequest, {Url=FB_REQUESTS.."/"..USERNAME.."/"..fromUser..".json", Method="DELETE"})
 end
@@ -2690,11 +2853,25 @@ local function pollFriendsSystem()
 	if ok2 and res2 and res2.StatusCode==200 and res2.Body~="null" then
 		local ok3, data = pcall(HttpService.JSONDecode, HttpService, res2.Body)
 		if ok3 and type(data)=="table" then
-			for dmKey, _ in pairs(data) do
-				if dmKey:find(USERNAME, 1, true) then
-					local parts={}; for p in dmKey:gmatch("[^_]+") do table.insert(parts,p) end
-					local friendName = parts[1]==USERNAME and parts[2] or parts[1]
-					if friendName and not knownFriends[dmKey] then
+			for dmKey, val in pairs(data) do
+				-- FIX: read stored user1/user2 directly — never parse the key
+				-- (keys like "abc_def_123" can't be split safely by "_")
+				local friendName = nil
+				if type(val) == "table" then
+					if val.user1 == USERNAME then
+						friendName = val.user2
+					elseif val.user2 == USERNAME then
+						friendName = val.user1
+					end
+				end
+				-- Fallback for old records that used the key-split approach
+				if not friendName and dmKey:find(USERNAME, 1, true) then
+					-- Only safe if neither username contains underscores, but better than nothing
+					local withoutMe = dmKey:gsub(USERNAME, ""):gsub("^_", ""):gsub("_$", "")
+					if withoutMe ~= "" then friendName = withoutMe end
+				end
+				if friendName then
+					if not knownFriends[dmKey] then
 						knownFriends[dmKey] = true
 						addFriendEntry(friendName)
 					end
