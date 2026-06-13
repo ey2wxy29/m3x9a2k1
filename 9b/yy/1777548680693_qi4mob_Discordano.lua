@@ -2066,6 +2066,52 @@ local FB_FRIENDS  = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/fr
 local FB_DMS      = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/dms"
 local FB_LASTSEEN = "https://discord-roblox-40fa8-default-rtdb.firebaseio.com/lastseen"
 
+-- Cache of friend info fetched from Firebase: username -> {headshot, displayName, lastOnline}
+local friendInfoCache = {}
+
+local function fetchFriendInfo(friendName, callback)
+	if friendInfoCache[friendName] then
+		if callback then callback(friendInfoCache[friendName]) end
+		return
+	end
+	task.spawn(function()
+		local ok, res = pcall(httpRequest, {Url=FB_USERS.."/"..friendName..".json", Method="GET"})
+		if ok and res and res.StatusCode==200 and res.Body~="null" then
+			local ok2, d = pcall(HttpService.JSONDecode, HttpService, res.Body)
+			if ok2 and d then
+				friendInfoCache[friendName] = {
+					headshot    = d.headshot or getRbxThumb(1),
+					displayName = d.displayName or friendName,
+					lastOnline  = d.lastOnline or 0,
+				}
+				if callback then callback(friendInfoCache[friendName]) end
+				return
+			end
+		end
+		-- Fallback
+		friendInfoCache[friendName] = {
+			headshot    = getRbxThumb(1),
+			displayName = friendName,
+			lastOnline  = 0,
+		}
+		if callback then callback(friendInfoCache[friendName]) end
+	end)
+end
+
+local function formatOnlineStatus(lastOnline)
+	if lastOnline == 0 then return "Unknown", C.txt_muted end
+	local diff = os.time() - lastOnline
+	if diff < 120 then
+		return "Online", C.online
+	elseif diff < 3600 then
+		return "Last seen " .. math.floor(diff/60) .. "m ago", C.txt_muted
+	elseif diff < 86400 then
+		return "Last seen " .. math.floor(diff/3600) .. "h ago", C.txt_muted
+	else
+		return "Last seen " .. math.floor(diff/86400) .. "d ago", C.txt_muted
+	end
+end
+
 local function getDMKey(a, b)
 	if a < b then return a.."_"..b else return b.."_"..a end
 end
@@ -2302,28 +2348,37 @@ friendsBox.MouseButton1Click:Connect(function()
 end)
 
 local function switchToChannel(dmKey, friendName)
-	-- FIX: update currentChannel BEFORE anything else
 	currentChannel = dmKey
 	hideAllChannelScrolls()
 	local cd = getChannelData(dmKey)
 	cd.scroll.Visible = true
 	banner.Visible = false
+	-- FIX: always show header and input bar when entering a real channel
+	header.Visible = true
+	inputArea.Visible = true
+	-- Hide the no-channel hint if present
+	local hint = colC:FindFirstChild("NoChannelHint")
+	if hint then hint:Destroy() end
 	if chatHeaderNameLabel then chatHeaderNameLabel.Text = friendName end
 	inputBox.PlaceholderText = "Message @"..friendName
 	showChatScreen()
 end
 
 local function switchToGlobal()
-	-- FIX: update currentChannel FIRST
 	currentChannel = (USERNAME == GLOBAL_OWNER) and "global" or "none"
 	hideAllChannelScrolls()
-	-- Only show global scroll for owner
 	if USERNAME == GLOBAL_OWNER then
 		msgScroll.Visible = true
 		banner.Visible = not bannerHidden
+		header.Visible = true
+		inputArea.Visible = true
+		if chatHeaderNameLabel then chatHeaderNameLabel.Text = "Roblox" end
+		inputBox.PlaceholderText = "Message @Roblox"
+	else
+		-- FIX: non-owner going "home" goes back to empty state — hide header/input
+		header.Visible = false
+		inputArea.Visible = false
 	end
-	if chatHeaderNameLabel then chatHeaderNameLabel.Text = "Roblox" end
-	inputBox.PlaceholderText = "Message @Roblox"
 	showChatScreen()
 end
 
@@ -2380,7 +2435,10 @@ function renderPrivateMsg(cd, senderName, text, msgTs, isEdited, replyData)
 	local isMe        = senderName == USERNAME
 	local avColor     = isMe and C.accent or Color3.fromRGB(100,100,220)
 	local avLetter    = string.upper(string.sub(senderName, 1, 1))
-	local displayName = isMe and DISPLAY_NAME or senderName
+	-- FIX: use cached display name instead of raw username
+	local cachedInfo  = friendInfoCache[senderName]
+	local displayName = isMe and DISPLAY_NAME or (cachedInfo and cachedInfo.displayName or senderName)
+	local friendShot  = isMe and MY_HEADSHOT or (cachedInfo and cachedInfo.headshot or getRbxThumb(1))
 	local timeStr     = os.date("%I:%M %p", msgTs)
 
 	-- Per-channel grouping state
@@ -2450,7 +2508,8 @@ function renderPrivateMsg(cd, senderName, text, msgTs, isEdited, replyData)
 		}, replyInner)
 		local rAvImg = make("ImageLabel", {
 			Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
-			Image=(replyData.sender==USERNAME) and MY_HEADSHOT or ROBLOX_HEADSHOT,
+			Image = (replyData.sender == USERNAME) and MY_HEADSHOT
+				or (friendInfoCache[replyData.sender] and friendInfoCache[replyData.sender].headshot or getRbxThumb(1)),
 			ZIndex=8,
 		}, rAv)
 		corner(14, rAvImg)
@@ -2500,7 +2559,7 @@ function renderPrivateMsg(cd, senderName, text, msgTs, isEdited, replyData)
 		local avF, avImg, avLbl = makeAv(40, avLetter, avColor, avHolder)
 		avF.Size = UDim2.new(1,0,1,0)
 		avImg.ZIndex=6; avLbl.ZIndex=6
-		applyHeadshot(avImg, avLbl, isMe and MY_HEADSHOT or ROBLOX_HEADSHOT)
+		applyHeadshot(avImg, avLbl, friendShot)
 
 		local tb = make("Frame", {
 			Size=UDim2.new(1,-64,0,0), AutomaticSize=Enum.AutomaticSize.Y,
@@ -2673,21 +2732,13 @@ local function addFriendEntry(friendName)
 	local sAvF, sAvImg, sAvLbl = makeAv(34, string.upper(string.sub(friendName,1,1)), C.accent, sAvH)
 	sAvF.Size = UDim2.new(1,0,1,0); sAvImg.ZIndex=6; sAvLbl.ZIndex=6
 
-	task.spawn(function()
-		local ok, res = pcall(httpRequest, {Url=FB_USERS.."/"..friendName..".json", Method="GET"})
-		if ok and res and res.StatusCode==200 and res.Body~="null" then
-			local ok2, d = pcall(HttpService.JSONDecode, HttpService, res.Body)
-			if ok2 and d and d.headshot then applyHeadshot(sAvImg, sAvLbl, d.headshot) end
-		end
-	end)
-
 	local sDot = make("Frame", {
 		Size=UDim2.new(0,10,0,10), Position=UDim2.new(1,-8,1,-8),
-		BackgroundColor3=C.online, BorderSizePixel=0, ZIndex=7,
+		BackgroundColor3=C.txt_muted, BorderSizePixel=0, ZIndex=7,
 	}, sAvH)
 	corner(10,sDot); make("UIStroke",{Color=C.bg_dark,Thickness=2.5},sDot)
 
-	make("TextLabel", {
+	local sNameLabel = make("TextLabel", {
 		Size=UDim2.new(1,-52,0,16), Position=UDim2.new(0,50,0,7),
 		BackgroundTransparency=1, Text=friendName,
 		Font=FM, TextSize=14, TextColor3=C.txt_white,
@@ -2697,15 +2748,25 @@ local function addFriendEntry(friendName)
 
 	local sLast = make("TextLabel", {
 		Size=UDim2.new(1,-52,0,12), Position=UDim2.new(0,50,0,24),
-		BackgroundTransparency=1, Text="",
+		BackgroundTransparency=1, Text="...",
 		Font=FR, TextSize=10, TextColor3=C.txt_muted,
 		TextXAlignment=Enum.TextXAlignment.Left,
 		TextTruncate=Enum.TextTruncate.AtEnd, ZIndex=5,
 	}, sEntry)
 
-	-- FIX: highlight selected entry and unhighlight others
+	-- FIX: fetch real headshot, display name, and actual online status
+	fetchFriendInfo(friendName, function(info)
+		applyHeadshot(sAvImg, sAvLbl, info.headshot)
+		sNameLabel.Text = info.displayName
+		local statusText, statusColor = formatOnlineStatus(info.lastOnline)
+		sDot.BackgroundColor3 = (info.lastOnline > 0 and (os.time() - info.lastOnline < 120)) and C.online or C.txt_muted
+		if sLast.Text == "..." then
+			sLast.Text = statusText
+			sLast.TextColor3 = statusColor
+		end
+	end)
+
 	sEntry.MouseButton1Click:Connect(function()
-		-- Unhighlight all sidebar entries
 		for _, slot in pairs(activeDMSlots) do
 			slot.entry.BackgroundTransparency = 1
 		end
@@ -2725,24 +2786,35 @@ local function addFriendEntry(friendName)
 
 	activeDMSlots[dmKey] = {entry=sEntry, lastMsgLabel=sLast, friendName=friendName}
 
+	-- ALL tab entry
 	local allEntry = make("Frame", {
 		Size=UDim2.new(1,0,0,52),
 		BackgroundColor3=C.bg_hover, BackgroundTransparency=0.8,
 		BorderSizePixel=0, ZIndex=5,
 	}, allScroll)
 	corner(4,allEntry)
-	make("TextLabel", {
+
+	local allNameLabel = make("TextLabel", {
 		Size=UDim2.new(1,-88,0,20), Position=UDim2.new(0,16,0,10),
 		BackgroundTransparency=1, Text=friendName,
 		Font=FM, TextSize=14, TextColor3=C.txt_white,
 		TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6,
 	}, allEntry)
-	make("TextLabel", {
+	local allStatusLabel = make("TextLabel", {
 		Size=UDim2.new(1,-88,0,14), Position=UDim2.new(0,16,0,30),
-		BackgroundTransparency=1, Text="Online",
-		Font=FR, TextSize=11, TextColor3=C.online,
+		BackgroundTransparency=1, Text="...",
+		Font=FR, TextSize=11, TextColor3=C.txt_muted,
 		TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6,
 	}, allEntry)
+
+	-- FIX: real display name + status in All tab
+	fetchFriendInfo(friendName, function(info)
+		allNameLabel.Text = info.displayName
+		local statusText, statusColor = formatOnlineStatus(info.lastOnline)
+		allStatusLabel.Text = statusText
+		allStatusLabel.TextColor3 = statusColor
+	end)
+
 	local msgBtn = make("TextButton", {
 		Size=UDim2.new(0,72,0,28), Position=UDim2.new(1,-80,0.5,-14),
 		BackgroundColor3=C.accent, BorderSizePixel=0,
@@ -2893,33 +2965,72 @@ task.spawn(function()
 		if ok2 and type(v)=="number" then lastSeenTs=v end
 	end
 
+	-- FIX: first ever run — don't spam all messages as unread, just record now
+	if lastSeenTs == 0 then
+		pcall(httpRequest, {
+			Url=FB_LASTSEEN.."/"..USERNAME..".json", Method="PUT",
+			Headers={["Content-Type"]="application/json"},
+			Body=tostring(os.time()),
+		})
+		return
+	end
+
+	local unread = {}  -- sender -> count, across global + all private DMs
+
+	-- Global channel (owner only)
 	if USERNAME == GLOBAL_OWNER then
 		local ok2, res2 = pcall(httpRequest, {Url=FIREBASE_URL..".json", Method="GET"})
 		if ok2 and res2 and res2.StatusCode==200 and res2.Body~="null" then
 			local ok3, data = pcall(HttpService.JSONDecode, HttpService, res2.Body)
 			if ok3 and type(data)=="table" then
-				local unread = {}
 				for _, val in pairs(data) do
-					if type(val)=="table" and val.ts and val.ts>lastSeenTs and val.sender~=USERNAME then
-						unread[val.sender] = (unread[val.sender] or 0)+1
+					if type(val)=="table" and val.ts and val.ts > lastSeenTs and val.sender ~= USERNAME then
+						unread[val.sender] = (unread[val.sender] or 0) + 1
 					end
-				end
-				for sender, count in pairs(unread) do
-					local uid = 1
-					pcall(function() uid = Players:GetUserIdFromNameAsync(sender) end)
-					pcall(function()
-						game:GetService("StarterGui"):SetCore("SendNotification",{
-							Title    = sender,
-							Text     = tostring(count).." new message"..(count>1 and "s" or ""),
-							Icon     = "rbxthumb://type=AvatarHeadShot&id="..tostring(uid).."&w=60&h=60",
-							Duration = 6,
-						})
-					end)
-					if sendSound and SEND_SOUND_ASSET then sendSound:Play() end
-					task.wait(1)
 				end
 			end
 		end
+	end
+
+	-- Private DMs: scan all friend channels this user is part of
+	local ok4, res4 = pcall(httpRequest, {Url=FB_FRIENDS..".json", Method="GET"})
+	if ok4 and res4 and res4.StatusCode==200 and res4.Body~="null" then
+		local ok5, friends = pcall(HttpService.JSONDecode, HttpService, res4.Body)
+		if ok5 and type(friends)=="table" then
+			for dmKey, val in pairs(friends) do
+				if type(val)=="table" and (val.user1==USERNAME or val.user2==USERNAME) then
+					local ok6, res6 = pcall(httpRequest, {
+						Url=FB_DMS.."/"..dmKey.."/messages.json", Method="GET",
+					})
+					if ok6 and res6 and res6.StatusCode==200 and res6.Body~="null" then
+						local ok7, msgs = pcall(HttpService.JSONDecode, HttpService, res6.Body)
+						if ok7 and type(msgs)=="table" then
+							for _, msg in pairs(msgs) do
+								if type(msg)=="table" and msg.ts and msg.ts > lastSeenTs and msg.sender ~= USERNAME then
+									unread[msg.sender] = (unread[msg.sender] or 0) + 1
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- One smooth notification per sender, staggered 1.5s apart
+	for sender, count in pairs(unread) do
+		local uid = 1
+		pcall(function() uid = Players:GetUserIdFromNameAsync(sender) end)
+		pcall(function()
+			game:GetService("StarterGui"):SetCore("SendNotification", {
+				Title    = sender,
+				Text     = tostring(count) .. " new message" .. (count > 1 and "s" or ""),
+				Icon     = "rbxthumb://type=AvatarHeadShot&id=" .. tostring(uid) .. "&w=60&h=60",
+				Duration = 5,
+			})
+		end)
+		if sendSound and SEND_SOUND_ASSET then sendSound:Play() end
+		task.wait(1.5)
 	end
 
 	pcall(httpRequest, {
@@ -2950,12 +3061,12 @@ end
 task.spawn(function()
 	task.wait(0.3)
 
-	-- FIX: non-owners start on "none" — show empty state or first friend DM
-	-- Initial state for non-owners: hide global, show empty colC with a hint
+	-- FIX: non-owners start on "none" — hide header and input bar, show hint
 	if USERNAME ~= GLOBAL_OWNER then
 		msgScroll.Visible = false
 		banner.Visible = false
-		-- Show a friendly placeholder label until they open a friend DM
+		header.Visible = false
+		inputArea.Visible = false
 		make("TextLabel", {
 			Name = "NoChannelHint",
 			Size = UDim2.new(1,0,0,40),
@@ -2981,6 +3092,53 @@ task.spawn(function()
 
 	buttonFrame.Visible = true
 	print("[DiscordBlox] Loaded successfully")
+
+	-- Refresh friend online status every 60s so dots stay accurate
+	task.spawn(function()
+		while gui and gui.Parent do
+			task.wait(60)
+			for friendName, _ in pairs(friendInfoCache) do
+				task.spawn(function()
+					local ok, res = pcall(httpRequest, {Url=FB_USERS.."/"..friendName..".json", Method="GET"})
+					if ok and res and res.StatusCode==200 and res.Body~="null" then
+						local ok2, d = pcall(HttpService.JSONDecode, HttpService, res.Body)
+						if ok2 and d then
+							friendInfoCache[friendName].lastOnline  = d.lastOnline  or friendInfoCache[friendName].lastOnline
+							friendInfoCache[friendName].displayName = d.displayName or friendInfoCache[friendName].displayName
+							-- Update sidebar dot and status text
+							for dmKey, slot in pairs(activeDMSlots) do
+								if slot.friendName == friendName then
+									local statusText, statusColor = formatOnlineStatus(friendInfoCache[friendName].lastOnline)
+									local isOnline = friendInfoCache[friendName].lastOnline > 0
+										and (os.time() - friendInfoCache[friendName].lastOnline < 120)
+									-- Find the online dot inside the entry
+									local avH = slot.entry:FindFirstChildWhichIsA("Frame")
+									if avH then
+										local dot = avH:FindFirstChild("Frame") -- the sDot
+										-- Walk children to find the dot (UIStroke child = dot)
+										for _, c in ipairs(avH:GetChildren()) do
+											if c:IsA("Frame") and c:FindFirstChildWhichIsA("UIStroke") then
+												c.BackgroundColor3 = isOnline and C.online or C.txt_muted
+											end
+										end
+									end
+									-- Only update last msg label if it still shows a status string (no messages yet)
+									if slot.lastMsgLabel.Text == statusText or
+										slot.lastMsgLabel.Text == "..." or
+										slot.lastMsgLabel.Text:find("Last seen") or
+										slot.lastMsgLabel.Text == "Online" or
+										slot.lastMsgLabel.Text == "Unknown" then
+										slot.lastMsgLabel.Text = statusText
+										slot.lastMsgLabel.TextColor3 = statusColor
+									end
+								end
+							end
+						end
+					end
+				end)
+			end
+		end
+	end)
 
 	while gui and gui.Parent do
 		task.wait(POLL_INTERVAL)
