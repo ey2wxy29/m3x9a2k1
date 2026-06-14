@@ -1999,17 +1999,29 @@ local function sendMessage()
 			end)
 		end
 	else
-		-- Private DM: optimistic local render + send
+		-- Private DM: render gray immediately, confirm white on success
+		local cd = channelData[currentChannel]
+		if not cd then return end
+		-- Render optimistically in pending (gray) state
+		local pendingKey = nil
+		cd.currentMsgKey = "pending"
+		local msgData = renderPrivateMsg(cd, USERNAME, text, os.time(), false, replyPayload, true)
 		task.spawn(function()
 			local success, key = firebaseSend(text, replyPayload)
 			if success then
-				local cd = channelData[currentChannel]
-				if cd then
-					cd.seenKeys[key] = true
-					cd.currentMsgKey = key
-					renderPrivateMsg(cd, USERNAME, text, os.time(), false, replyPayload)
+				pendingKey = key
+				cd.seenKeys[key] = true
+				-- Confirm: tween content to white
+				if msgData and msgData.content then
+					TweenService:Create(msgData.content, TweenInfo.new(0.25), {TextColor3 = C.txt_white}):Play()
 				end
 				if sendSound and SEND_SOUND_ASSET then sendSound:Play() end
+			else
+				-- Mark as failed
+				if msgData and msgData.content then
+					msgData.content.TextColor3 = Color3.fromRGB(200,60,60)
+					msgData.content.Text = text .. "  [failed]"
+				end
 			end
 		end)
 	end
@@ -2353,31 +2365,39 @@ local function switchToChannel(dmKey, friendName)
 	local cd = getChannelData(dmKey)
 	cd.scroll.Visible = true
 	banner.Visible = false
-	-- FIX: always show header and input bar when entering a real channel
 	header.Visible = true
 	inputArea.Visible = true
-	-- Hide the no-channel hint if present
 	local hint = colC:FindFirstChild("NoChannelHint")
 	if hint then hint:Destroy() end
 	if chatHeaderNameLabel then chatHeaderNameLabel.Text = friendName end
 	inputBox.PlaceholderText = "Message @"..friendName
+	-- FIX: unhighlight Roblox dmEntry, highlight the chosen friend entry
+	dmEntry.BackgroundTransparency = 1
+	for _, slot in pairs(activeDMSlots) do
+		slot.entry.BackgroundTransparency = slot.friendName == friendName and 0.7 or 1
+	end
 	showChatScreen()
 end
 
 local function switchToGlobal()
 	currentChannel = (USERNAME == GLOBAL_OWNER) and "global" or "none"
 	hideAllChannelScrolls()
+	-- FIX: unhighlight all friend entries, re-highlight Roblox dmEntry
+	for _, slot in pairs(activeDMSlots) do
+		slot.entry.BackgroundTransparency = 1
+	end
 	if USERNAME == GLOBAL_OWNER then
 		msgScroll.Visible = true
 		banner.Visible = not bannerHidden
 		header.Visible = true
 		inputArea.Visible = true
+		dmEntry.BackgroundTransparency = 0
 		if chatHeaderNameLabel then chatHeaderNameLabel.Text = "Roblox" end
 		inputBox.PlaceholderText = "Message @Roblox"
 	else
-		-- FIX: non-owner going "home" goes back to empty state — hide header/input
 		header.Visible = false
 		inputArea.Visible = false
+		dmEntry.BackgroundTransparency = 1
 	end
 	showChatScreen()
 end
@@ -2399,7 +2419,7 @@ dmEntryBtn.MouseButton1Click:Connect(switchToGlobal)
 -- RENDER PRIVATE DM MESSAGE
 -- Full-featured: grouping, date separators, hover, hold menu, emoji
 -- =============================================
-function renderPrivateMsg(cd, senderName, text, msgTs, isEdited, replyData)
+function renderPrivateMsg(cd, senderName, text, msgTs, isEdited, replyData, isPending)
 	msgTs = msgTs or os.time()
 
 	-- Per-channel date separator
@@ -2535,6 +2555,8 @@ function renderPrivateMsg(cd, senderName, text, msgTs, isEdited, replyData)
 		BackgroundTransparency=1, LayoutOrder=2, ZIndex=5,
 	}, outerCol)
 
+	local txtColor = isPending and C.txt_pending or C.txt_white
+
 	if isGrouped then
 		pad(2,4,52,0,msgRow)
 		local tokens = parseEmoji(text)
@@ -2543,7 +2565,7 @@ function renderPrivateMsg(cd, senderName, text, msgTs, isEdited, replyData)
 			Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
 			BackgroundTransparency=1, ZIndex=6,
 		}, msgRow)
-		content = buildEmojiContent(wrapper, tokens, jumbo, 6, C.txt_white)
+		content = buildEmojiContent(wrapper, tokens, jumbo, 6, txtColor)
 	else
 		make("UIListLayout", {
 			FillDirection=Enum.FillDirection.Horizontal,
@@ -2596,7 +2618,7 @@ function renderPrivateMsg(cd, senderName, text, msgTs, isEdited, replyData)
 			Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
 			BackgroundTransparency=1, LayoutOrder=2, ZIndex=6,
 		}, tb)
-		content = buildEmojiContent(wrapper, tokens, jumbo, 7, C.txt_white)
+		content = buildEmojiContent(wrapper, tokens, jumbo, 7, txtColor)
 
 		if isEdited then
 			make("TextLabel", {
@@ -2962,7 +2984,14 @@ task.spawn(function()
 	local ok, res = pcall(httpRequest, {Url=FB_LASTSEEN.."/"..USERNAME..".json", Method="GET"})
 	if ok and res and res.StatusCode==200 and res.Body~="null" then
 		local ok2, v = pcall(HttpService.JSONDecode, HttpService, res.Body)
-		if ok2 and type(v)=="number" then lastSeenTs=v end
+		-- FIX: Firebase may decode timestamp as number OR return raw string — handle both
+		if ok2 then
+			if type(v)=="number" then
+				lastSeenTs = v
+			elseif type(v)=="string" then
+				lastSeenTs = tonumber(v) or 0
+			end
+		end
 	end
 
 	-- FIX: first ever run — don't spam all messages as unread, just record now
