@@ -520,12 +520,19 @@ local dmEntry = make("Frame", {
 }, dmArea)
 corner(4, dmEntry)
 
-make("Frame", {
+local dmSelectedBar = make("Frame", {
+	Name = "SelectedBar",
 	Size = UDim2.new(0,3,0,24),
 	Position = UDim2.new(0,-3,0.5,-12),
 	BackgroundColor3 = C.txt_white,
 	BorderSizePixel = 0, ZIndex = 5,
+	-- Owner starts on global channel so bar is visible; others never see this entry
+	Visible = (USERNAME == GLOBAL_OWNER),
 }, dmEntry)
+-- Owner starts highlighted at 0.7 to match friend entry style
+if USERNAME == GLOBAL_OWNER then
+	dmEntry.BackgroundTransparency = 0.7
+end
 
 local dmAvHolder = make("Frame", {
 	Size = UDim2.new(0,34,0,34),
@@ -2371,8 +2378,9 @@ local function switchToChannel(dmKey, friendName)
 	if hint then hint:Destroy() end
 	if chatHeaderNameLabel then chatHeaderNameLabel.Text = friendName end
 	inputBox.PlaceholderText = "Message @"..friendName
-	-- FIX: unhighlight Roblox dmEntry, highlight the chosen friend entry
+	-- FIX: unhighlight Roblox entry (bar hidden, bg transparent), highlight friend
 	dmEntry.BackgroundTransparency = 1
+	dmSelectedBar.Visible = false
 	for _, slot in pairs(activeDMSlots) do
 		slot.entry.BackgroundTransparency = slot.friendName == friendName and 0.7 or 1
 	end
@@ -2382,7 +2390,6 @@ end
 local function switchToGlobal()
 	currentChannel = (USERNAME == GLOBAL_OWNER) and "global" or "none"
 	hideAllChannelScrolls()
-	-- FIX: unhighlight all friend entries, re-highlight Roblox dmEntry
 	for _, slot in pairs(activeDMSlots) do
 		slot.entry.BackgroundTransparency = 1
 	end
@@ -2391,13 +2398,16 @@ local function switchToGlobal()
 		banner.Visible = not bannerHidden
 		header.Visible = true
 		inputArea.Visible = true
-		dmEntry.BackgroundTransparency = 0
+		-- FIX: match friend entry highlight style (0.7 transparency) + show bar
+		dmEntry.BackgroundTransparency = 0.7
+		dmSelectedBar.Visible = true
 		if chatHeaderNameLabel then chatHeaderNameLabel.Text = "Roblox" end
 		inputBox.PlaceholderText = "Message @Roblox"
 	else
 		header.Visible = false
 		inputArea.Visible = false
 		dmEntry.BackgroundTransparency = 1
+		dmSelectedBar.Visible = false
 	end
 	showChatScreen()
 end
@@ -2674,11 +2684,12 @@ local function pollPrivateDM(dmKey, friendName)
 	for _, msg in ipairs(msgs) do
 		if not cd.seenKeys[msg.key] then
 			cd.seenKeys[msg.key] = true
-			-- Pass the key into cd so renderPrivateMsg can capture it for hold menu
 			cd.currentMsgKey = msg.key
 			renderPrivateMsg(cd, msg.sender, msg.text, msg.ts, msg.edited == true, msg.replyData)
 
-			if msg.sender ~= USERNAME and not gui.Enabled then
+			-- FIX: only notify for messages that arrived AFTER the script loaded,
+			-- not for historical messages being loaded on first poll
+			if msg.sender ~= USERNAME and not gui.Enabled and msg.ts > SESSION_START then
 				pcall(function()
 					local uid = Players:GetUserIdFromNameAsync(msg.sender)
 					game:GetService("StarterGui"):SetCore("SendNotification", {
