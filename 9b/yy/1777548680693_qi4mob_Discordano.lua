@@ -514,6 +514,7 @@ make("UIListLayout", {
 local dmEntry = make("Frame", {
 	Size = UDim2.new(1,0,0,44),
 	BackgroundColor3 = C.bg_hover,
+	BackgroundTransparency = 1,  -- starts transparent, highlighted on select like friend entries
 	BorderSizePixel = 0, ZIndex = 4,
 	Visible = (USERNAME == GLOBAL_OWNER),
 	LayoutOrder = 1,
@@ -526,10 +527,8 @@ local dmSelectedBar = make("Frame", {
 	Position = UDim2.new(0,-3,0.5,-12),
 	BackgroundColor3 = C.txt_white,
 	BorderSizePixel = 0, ZIndex = 5,
-	-- Owner starts on global channel so bar is visible; others never see this entry
 	Visible = (USERNAME == GLOBAL_OWNER),
 }, dmEntry)
--- Owner starts highlighted at 0.7 to match friend entry style
 if USERNAME == GLOBAL_OWNER then
 	dmEntry.BackgroundTransparency = 0.7
 end
@@ -2378,11 +2377,14 @@ local function switchToChannel(dmKey, friendName)
 	if hint then hint:Destroy() end
 	if chatHeaderNameLabel then chatHeaderNameLabel.Text = friendName end
 	inputBox.PlaceholderText = "Message @"..friendName
-	-- FIX: unhighlight Roblox entry (bar hidden, bg transparent), highlight friend
+	-- Unhighlight Roblox entry
 	dmEntry.BackgroundTransparency = 1
 	dmSelectedBar.Visible = false
+	-- Highlight only the active friend entry, hide bar on all others
 	for _, slot in pairs(activeDMSlots) do
-		slot.entry.BackgroundTransparency = slot.friendName == friendName and 0.7 or 1
+		local isActive = slot.friendName == friendName
+		slot.entry.BackgroundTransparency = isActive and 0.7 or 1
+		if slot.selectedBar then slot.selectedBar.Visible = isActive end
 	end
 	showChatScreen()
 end
@@ -2390,15 +2392,16 @@ end
 local function switchToGlobal()
 	currentChannel = (USERNAME == GLOBAL_OWNER) and "global" or "none"
 	hideAllChannelScrolls()
+	-- Unhighlight all friend entries
 	for _, slot in pairs(activeDMSlots) do
 		slot.entry.BackgroundTransparency = 1
+		if slot.selectedBar then slot.selectedBar.Visible = false end
 	end
 	if USERNAME == GLOBAL_OWNER then
 		msgScroll.Visible = true
 		banner.Visible = not bannerHidden
 		header.Visible = true
 		inputArea.Visible = true
-		-- FIX: match friend entry highlight style (0.7 transparency) + show bar
 		dmEntry.BackgroundTransparency = 0.7
 		dmSelectedBar.Visible = true
 		if chatHeaderNameLabel then chatHeaderNameLabel.Text = "Roblox" end
@@ -2758,6 +2761,16 @@ local function addFriendEntry(friendName)
 	}, dmArea)
 	corner(4, sEntry)
 
+	-- Selected bar (same as Roblox dmEntry bar), hidden until this DM is active
+	local sSelectedBar = make("Frame", {
+		Name = "SelectedBar",
+		Size = UDim2.new(0,3,0,24),
+		Position = UDim2.new(0,-3,0.5,-12),
+		BackgroundColor3 = C.txt_white,
+		BorderSizePixel = 0, ZIndex = 5,
+		Visible = false,
+	}, sEntry)
+
 	local sAvH = make("Frame", {
 		Size=UDim2.new(0,34,0,34), Position=UDim2.new(0,8,0.5,-17),
 		BackgroundTransparency=1, ZIndex=5,
@@ -2817,7 +2830,7 @@ local function addFriendEntry(friendName)
 		end
 	end)
 
-	activeDMSlots[dmKey] = {entry=sEntry, lastMsgLabel=sLast, friendName=friendName}
+	activeDMSlots[dmKey] = {entry=sEntry, selectedBar=sSelectedBar, lastMsgLabel=sLast, friendName=friendName}
 
 	-- ALL tab entry
 	local allEntry = make("Frame", {
