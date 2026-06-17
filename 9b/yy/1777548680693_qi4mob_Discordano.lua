@@ -16,7 +16,7 @@ local HttpService      = game:GetService("HttpService")
 local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local USERNAME  = player.Name
-local GLOBAL_OWNER = "noboestnobo"  -- only this user sees the global Roblox DM channel
+local GLOBAL_OWNER = "noboestnobo"
 
 -- =============================================
 -- TOPBAR BUTTON
@@ -122,7 +122,7 @@ local CUSTOM_EMOJIS = {
 	hard          = {asset = "rbxassetid://91932716779860"},
 	normal        = {asset = "rbxassetid://116101584722307"},
 	aok           = {asset = "rbxassetid://127165613136301"},
-	ayes          = {asset = "rbxassetid://94931283338509"},
+	ayes          = {asset = "rbxassetid://111269553639603"},
 	easy          = {asset = "rbxassetid://140636781068646"},
 }
 
