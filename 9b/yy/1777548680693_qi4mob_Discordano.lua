@@ -16,7 +16,7 @@ local HttpService      = game:GetService("HttpService")
 local player    = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local USERNAME  = player.Name
-local GLOBAL_OWNER = "noboestnobo"
+local GLOBAL_OWNER = "noboestnobo"  -- only this user sees the global Roblox DM channel
 
 -- =============================================
 -- TOPBAR BUTTON
@@ -122,7 +122,7 @@ local CUSTOM_EMOJIS = {
 	hard          = {asset = "rbxassetid://91932716779860"},
 	normal        = {asset = "rbxassetid://116101584722307"},
 	aok           = {asset = "rbxassetid://127165613136301"},
-	ayes          = {asset = "rbxassetid://111269553639603"},
+	ayes          = {asset = "rbxassetid://94931283338509"},
 	easy          = {asset = "rbxassetid://140636781068646"},
 }
 
@@ -2958,7 +2958,11 @@ end)
 -- =============================================
 -- POLL FRIENDS + REQUESTS
 -- =============================================
-local function pollFriendsSystem()
+-- isInitialLoad: true on first call — fetches one DM at a time with yields to avoid lag spike
+local initialLoadDone = false
+
+local function pollFriendsSystem(isInitialLoad)
+	-- Pending friend requests (always fast, just UI entries)
 	local ok, res = pcall(httpRequest, {Url=FB_REQUESTS.."/"..USERNAME..".json", Method="GET"})
 	if ok and res and res.StatusCode==200 and res.Body~="null" then
 		local ok2, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
@@ -2968,34 +2972,52 @@ local function pollFriendsSystem()
 	end
 
 	local ok2, res2 = pcall(httpRequest, {Url=FB_FRIENDS..".json", Method="GET"})
-	if ok2 and res2 and res2.StatusCode==200 and res2.Body~="null" then
-		local ok3, data = pcall(HttpService.JSONDecode, HttpService, res2.Body)
-		if ok3 and type(data)=="table" then
-			for dmKey, val in pairs(data) do
-				-- FIX: read stored user1/user2 directly — never parse the key
-				-- (keys like "abc_def_123" can't be split safely by "_")
-				local friendName = nil
-				if type(val) == "table" then
-					if val.user1 == USERNAME then
-						friendName = val.user2
-					elseif val.user2 == USERNAME then
-						friendName = val.user1
-					end
-				end
-				-- Fallback for old records that used the key-split approach
-				if not friendName and dmKey:find(USERNAME, 1, true) then
-					-- Only safe if neither username contains underscores, but better than nothing
-					local withoutMe = dmKey:gsub(USERNAME, ""):gsub("^_", ""):gsub("_$", "")
-					if withoutMe ~= "" then friendName = withoutMe end
-				end
-				if friendName then
-					if not knownFriends[dmKey] then
-						knownFriends[dmKey] = true
-						addFriendEntry(friendName)
-					end
-					pollPrivateDM(dmKey, friendName)
-				end
+	if not (ok2 and res2 and res2.StatusCode==200 and res2.Body~="null") then return end
+	local ok3, data = pcall(HttpService.JSONDecode, HttpService, res2.Body)
+	if not (ok3 and type(data)=="table") then return end
+
+	-- Collect all friend channels this user is part of
+	local myChannels = {}
+	for dmKey, val in pairs(data) do
+		local friendName = nil
+		if type(val) == "table" then
+			if val.user1 == USERNAME then friendName = val.user2
+			elseif val.user2 == USERNAME then friendName = val.user1 end
+		end
+		-- Fallback for old records
+		if not friendName and dmKey:find(USERNAME, 1, true) then
+			local withoutMe = dmKey:gsub(USERNAME, ""):gsub("^_", ""):gsub("_$", "")
+			if withoutMe ~= "" then friendName = withoutMe end
+		end
+		if friendName then
+			table.insert(myChannels, {dmKey=dmKey, friendName=friendName})
+		end
+	end
+
+	if isInitialLoad then
+		-- STAGGERED: add sidebar entries first so UI appears quickly, then
+		-- load each DM's message history one at a time with a yield between them
+		for _, ch in ipairs(myChannels) do
+			if not knownFriends[ch.dmKey] then
+				knownFriends[ch.dmKey] = true
+				addFriendEntry(ch.friendName)
 			end
+		end
+		-- Now load message history one channel at a time
+		for i, ch in ipairs(myChannels) do
+			pollPrivateDM(ch.dmKey, ch.friendName)
+			-- Yield after each channel so Roblox can render before the next batch
+			task.wait(0.05)
+		end
+		initialLoadDone = true
+	else
+		-- REGULAR POLL: fast, all channels, only new messages matter
+		for _, ch in ipairs(myChannels) do
+			if not knownFriends[ch.dmKey] then
+				knownFriends[ch.dmKey] = true
+				addFriendEntry(ch.friendName)
+			end
+			pollPrivateDM(ch.dmKey, ch.friendName)
 		end
 	end
 end
@@ -3005,21 +3027,29 @@ end
 -- =============================================
 task.spawn(function()
 	local lastSeenTs = 0
+	local confirmedFirstRun = false  -- true only if Firebase explicitly returned null (key never written)
+
 	local ok, res = pcall(httpRequest, {Url=FB_LASTSEEN.."/"..USERNAME..".json", Method="GET"})
-	if ok and res and res.StatusCode==200 and res.Body~="null" then
-		local ok2, v = pcall(HttpService.JSONDecode, HttpService, res.Body)
-		-- FIX: Firebase may decode timestamp as number OR return raw string — handle both
-		if ok2 then
-			if type(v)=="number" then
-				lastSeenTs = v
-			elseif type(v)=="string" then
-				lastSeenTs = tonumber(v) or 0
+	if ok and res and res.StatusCode==200 then
+		if res.Body == "null" then
+			-- Key genuinely doesn't exist — this is a first run
+			confirmedFirstRun = true
+		else
+			local ok2, v = pcall(HttpService.JSONDecode, HttpService, res.Body)
+			if ok2 then
+				if type(v)=="number" then
+					lastSeenTs = v
+				elseif type(v)=="string" then
+					lastSeenTs = tonumber(v) or 0
+				end
 			end
 		end
 	end
+	-- If request failed entirely, lastSeenTs stays 0 but confirmedFirstRun stays false
+	-- so we still attempt the scan (worst case we show 0 notifications if ts comparison fails)
 
-	-- FIX: first ever run — don't spam all messages as unread, just record now
-	if lastSeenTs == 0 then
+	-- Only skip on a confirmed first run to avoid spamming all history
+	if confirmedFirstRun then
 		pcall(httpRequest, {
 			Url=FB_LASTSEEN.."/"..USERNAME..".json", Method="PUT",
 			Headers={["Content-Type"]="application/json"},
@@ -3027,6 +3057,10 @@ task.spawn(function()
 		})
 		return
 	end
+
+	-- If lastSeenTs is still 0 here (bad read/parse), use a large window so we don't
+	-- flood the user — only show messages from the last 24 hours as "unread"
+	local effectiveTs = lastSeenTs > 0 and lastSeenTs or (os.time() - 86400)
 
 	local unread = {}  -- sender -> count, across global + all private DMs
 
@@ -3037,7 +3071,7 @@ task.spawn(function()
 			local ok3, data = pcall(HttpService.JSONDecode, HttpService, res2.Body)
 			if ok3 and type(data)=="table" then
 				for _, val in pairs(data) do
-					if type(val)=="table" and val.ts and val.ts > lastSeenTs and val.sender ~= USERNAME then
+					if type(val)=="table" and val.ts and val.ts > effectiveTs and val.sender ~= USERNAME then
 						unread[val.sender] = (unread[val.sender] or 0) + 1
 					end
 				end
@@ -3059,7 +3093,7 @@ task.spawn(function()
 						local ok7, msgs = pcall(HttpService.JSONDecode, HttpService, res6.Body)
 						if ok7 and type(msgs)=="table" then
 							for _, msg in pairs(msgs) do
-								if type(msg)=="table" and msg.ts and msg.ts > lastSeenTs and msg.sender ~= USERNAME then
+								if type(msg)=="table" and msg.ts and msg.ts > effectiveTs and msg.sender ~= USERNAME then
 									unread[msg.sender] = (unread[msg.sender] or 0) + 1
 								end
 							end
@@ -3106,9 +3140,9 @@ end)
 -- =============================================
 -- POLL LOOP
 -- =============================================
-local function fullPoll()
-	firebasePoll()       -- global (owner only, guarded inside)
-	pollFriendsSystem()  -- friends + private DMs (everyone)
+local function fullPoll(isInitialLoad)
+	firebasePoll()
+	pollFriendsSystem(isInitialLoad)
 end
 
 task.spawn(function()
@@ -3132,7 +3166,7 @@ task.spawn(function()
 		}, colC)
 	end
 
-	local ok, err = pcall(fullPoll)
+	local ok, err = pcall(fullPoll, true)  -- initial load: staggered per-channel
 	if not ok then
 		warn("[DiscordBlox] Initial poll failed: " .. tostring(err))
 	end
@@ -3196,7 +3230,7 @@ task.spawn(function()
 	while gui and gui.Parent do
 		task.wait(POLL_INTERVAL)
 		if gui and gui.Parent then
-			pcall(fullPoll)
+			pcall(fullPoll, false)  -- regular poll: fast, no stagger
 		end
 	end
 end)
