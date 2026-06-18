@@ -2958,11 +2958,7 @@ end)
 -- =============================================
 -- POLL FRIENDS + REQUESTS
 -- =============================================
--- isInitialLoad: true on first call — fetches one DM at a time with yields to avoid lag spike
-local initialLoadDone = false
-
-local function pollFriendsSystem(isInitialLoad)
-	-- Pending friend requests (always fast, just UI entries)
+local function pollFriendsSystem()
 	local ok, res = pcall(httpRequest, {Url=FB_REQUESTS.."/"..USERNAME..".json", Method="GET"})
 	if ok and res and res.StatusCode==200 and res.Body~="null" then
 		local ok2, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
@@ -2976,8 +2972,6 @@ local function pollFriendsSystem(isInitialLoad)
 	local ok3, data = pcall(HttpService.JSONDecode, HttpService, res2.Body)
 	if not (ok3 and type(data)=="table") then return end
 
-	-- Collect all friend channels this user is part of
-	local myChannels = {}
 	for dmKey, val in pairs(data) do
 		local friendName = nil
 		if type(val) == "table" then
@@ -2990,34 +2984,11 @@ local function pollFriendsSystem(isInitialLoad)
 			if withoutMe ~= "" then friendName = withoutMe end
 		end
 		if friendName then
-			table.insert(myChannels, {dmKey=dmKey, friendName=friendName})
-		end
-	end
-
-	if isInitialLoad then
-		-- STAGGERED: add sidebar entries first so UI appears quickly, then
-		-- load each DM's message history one at a time with a yield between them
-		for _, ch in ipairs(myChannels) do
-			if not knownFriends[ch.dmKey] then
-				knownFriends[ch.dmKey] = true
-				addFriendEntry(ch.friendName)
+			if not knownFriends[dmKey] then
+				knownFriends[dmKey] = true
+				addFriendEntry(friendName)
 			end
-		end
-		-- Now load message history one channel at a time
-		for i, ch in ipairs(myChannels) do
-			pollPrivateDM(ch.dmKey, ch.friendName)
-			-- Yield after each channel so Roblox can render before the next batch
-			task.wait(0.05)
-		end
-		initialLoadDone = true
-	else
-		-- REGULAR POLL: fast, all channels, only new messages matter
-		for _, ch in ipairs(myChannels) do
-			if not knownFriends[ch.dmKey] then
-				knownFriends[ch.dmKey] = true
-				addFriendEntry(ch.friendName)
-			end
-			pollPrivateDM(ch.dmKey, ch.friendName)
+			pollPrivateDM(dmKey, friendName)
 		end
 	end
 end
@@ -3140,9 +3111,9 @@ end)
 -- =============================================
 -- POLL LOOP
 -- =============================================
-local function fullPoll(isInitialLoad)
+local function fullPoll()
 	firebasePoll()
-	pollFriendsSystem(isInitialLoad)
+	pollFriendsSystem()
 end
 
 task.spawn(function()
@@ -3166,7 +3137,58 @@ task.spawn(function()
 		}, colC)
 	end
 
-	local ok, err = pcall(fullPoll, true)  -- initial load: staggered per-channel
+	-- Initial load: fetch friend list first to populate sidebar, then load
+	-- each DM's history one at a time with a yield to avoid a render spike
+	local ok, err = pcall(function()
+		firebasePoll()  -- global channel
+
+		-- Friend requests (fast, no messages)
+		local okR, resR = pcall(httpRequest, {Url=FB_REQUESTS.."/"..USERNAME..".json", Method="GET"})
+		if okR and resR and resR.StatusCode==200 and resR.Body~="null" then
+			local ok2, data = pcall(HttpService.JSONDecode, HttpService, resR.Body)
+			if ok2 and type(data)=="table" then
+				for fromUser, _ in pairs(data) do addPendingEntry(fromUser) end
+			end
+		end
+
+		-- Fetch friend list
+		local okF, resF = pcall(httpRequest, {Url=FB_FRIENDS..".json", Method="GET"})
+		if not (okF and resF and resF.StatusCode==200 and resF.Body~="null") then return end
+		local okD, friendData = pcall(HttpService.JSONDecode, HttpService, resF.Body)
+		if not (okD and type(friendData)=="table") then return end
+
+		-- Collect channels
+		local myChannels = {}
+		for dmKey, val in pairs(friendData) do
+			local friendName = nil
+			if type(val)=="table" then
+				if val.user1==USERNAME then friendName = val.user2
+				elseif val.user2==USERNAME then friendName = val.user1 end
+			end
+			if not friendName and dmKey:find(USERNAME, 1, true) then
+				local w = dmKey:gsub(USERNAME,""):gsub("^_",""):gsub("_$","")
+				if w ~= "" then friendName = w end
+			end
+			if friendName then
+				table.insert(myChannels, {dmKey=dmKey, friendName=friendName})
+			end
+		end
+
+		-- Step 1: add ALL sidebar entries immediately so UI looks populated fast
+		for _, ch in ipairs(myChannels) do
+			if not knownFriends[ch.dmKey] then
+				knownFriends[ch.dmKey] = true
+				addFriendEntry(ch.friendName)
+			end
+		end
+
+		-- Step 2: load each channel's message history one at a time with a yield
+		-- so Roblox can render each batch before hitting the next HTTP request
+		for _, ch in ipairs(myChannels) do
+			pollPrivateDM(ch.dmKey, ch.friendName)
+			task.wait(0.1)
+		end
+	end)
 	if not ok then
 		warn("[DiscordBlox] Initial poll failed: " .. tostring(err))
 	end
@@ -3230,7 +3252,7 @@ task.spawn(function()
 	while gui and gui.Parent do
 		task.wait(POLL_INTERVAL)
 		if gui and gui.Parent then
-			pcall(fullPoll, false)  -- regular poll: fast, no stagger
+			pcall(fullPoll)
 		end
 	end
 end)
